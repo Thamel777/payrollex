@@ -3,9 +3,11 @@
 import { Bell, Search, ChevronDown, User, LogOut, Settings, Award } from "lucide-react";
 import { useState } from "react";
 import { usePathname } from "next/navigation";
+import { useAuth } from "@/lib/AuthContext";
 
 export default function Header() {
   const pathname = usePathname();
+  const { user, role, logout } = useAuth();
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
 
@@ -133,12 +135,14 @@ export default function Header() {
             onClick={() => setShowProfileMenu(!showProfileMenu)}
             className="flex items-center gap-2 hover:bg-slate-50 p-1.5 rounded-lg transition-colors focus:outline-none text-left"
           >
-            <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold ring-2 ring-blue-100">
-              AU
+            <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold ring-2 ring-blue-100 uppercase">
+              {user?.email ? user.email.substring(0, 2) : "US"}
             </div>
             <div className="hidden sm:flex flex-col">
-              <span className="text-xs font-bold text-slate-800 leading-tight">Admin User</span>
-              <span className="text-[9px] text-slate-500 font-semibold">System Admin</span>
+              <span className="text-xs font-bold text-slate-800 leading-tight">
+                {user?.email ? user.email.split("@")[0].toUpperCase() : "User"}
+              </span>
+              <span className="text-[9px] text-slate-500 font-semibold">{role || "Employee"}</span>
             </div>
             <ChevronDown className="h-3.5 w-3.5 text-slate-400 hidden sm:block" />
           </button>
@@ -146,8 +150,10 @@ export default function Header() {
           {showProfileMenu && (
             <div className="absolute right-0 mt-3 w-48 bg-white border border-slate-200 rounded-xl shadow-xl py-1 z-50 animate-fade-in">
               <div className="px-4 py-2.5 border-b border-slate-100">
-                <p className="text-xs font-bold text-slate-800">Admin User</p>
-                <p className="text-[9px] text-slate-400 truncate">admin@payrollex.com</p>
+                <p className="text-xs font-bold text-slate-800">
+                  {user?.email ? user.email.split("@")[0].toUpperCase() : "User"}
+                </p>
+                <p className="text-[9px] text-slate-400 truncate">{user?.email || "user@payrollex.com"}</p>
               </div>
               <button className="w-full px-4 py-2 hover:bg-slate-50 text-left text-xs font-medium text-slate-700 flex items-center gap-2 transition-colors">
                 <User className="h-4 w-4 text-slate-400" />
@@ -158,7 +164,10 @@ export default function Header() {
                 System Settings
               </button>
               <div className="border-t border-slate-100 my-1"></div>
-              <button className="w-full px-4 py-2 hover:bg-slate-50 text-left text-xs font-semibold text-red-600 flex items-center gap-2 transition-colors">
+              <button
+                onClick={logout}
+                className="w-full px-4 py-2 hover:bg-slate-50 text-left text-xs font-semibold text-red-600 flex items-center gap-2 transition-colors cursor-pointer"
+              >
                 <LogOut className="h-4 w-4 text-red-400" />
                 Log Out
               </button>
