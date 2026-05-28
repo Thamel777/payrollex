@@ -326,7 +326,7 @@ export default function OvertimePage() {
             </div>
             <div className="h-44 relative my-2 flex items-center justify-center">
               {mounted ? (
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height={180}>
                   <PieChart>
                     <Pie data={typeData} cx="50%" cy="50%" innerRadius={45} outerRadius={60} paddingAngle={2} dataKey="value">
                       {typeData.map((entry, index) => (
@@ -362,7 +362,7 @@ export default function OvertimePage() {
             </div>
             <div className="h-44 mt-4">
               {mounted ? (
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height={180}>
                   <LineChart data={trendData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
                     <XAxis dataKey="date" tickLine={false} axisLine={false} style={{ fontSize: "9px", fill: "#94a3b8" }} />

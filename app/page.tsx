@@ -162,7 +162,7 @@ export default function Dashboard() {
           </div>
           <div className="h-64 relative my-2 flex items-center justify-center">
             {mounted ? (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height={240}>
                 <PieChart>
                   <Pie
                     data={attendanceData}
@@ -218,7 +218,7 @@ export default function Dashboard() {
           </div>
           <div className="h-64 my-2">
             {mounted ? (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height={240}>
                 <AreaChart data={weeklyTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                   <defs>
                     <linearGradient id="colorPresent" x1="0" y1="0" x2="0" y2="1">

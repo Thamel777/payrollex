@@ -276,7 +276,7 @@ export default function LeavePage() {
             </div>
             <div className="h-44 relative my-2 flex items-center justify-center">
               {mounted ? (
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height={180}>
                   <PieChart>
                     <Pie data={balanceData} cx="50%" cy="50%" innerRadius={45} outerRadius={60} paddingAngle={2} dataKey="value">
                       {balanceData.map((entry, index) => (
