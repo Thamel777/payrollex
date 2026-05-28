@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Fragment } from "react";
 import {
   ShieldAlert,
   UserCheck,
@@ -176,7 +176,7 @@ export default function UserRolesPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {matrix.map((moduleGroup, gIdx) => (
-                    <span key={gIdx} className="table-row-group">
+                    <Fragment key={gIdx}>
                       {/* Module group Header */}
                       <tr className="bg-slate-50/30">
                         <td colSpan={7} className="py-1.5 px-4 font-bold text-slate-400 text-[9px] uppercase tracking-wider">
@@ -236,7 +236,7 @@ export default function UserRolesPage() {
                           </td>
                         </tr>
                       ))}
-                    </span>
+                    </Fragment>
                   ))}
                 </tbody>
               </table>

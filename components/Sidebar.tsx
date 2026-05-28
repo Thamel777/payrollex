@@ -14,12 +14,11 @@ import {
   FileText,
   Fingerprint,
   Shield,
-  Settings,
   ChevronLeft,
-  ChevronRight,
-  Menu
+  ChevronRight
 } from "lucide-react";
 import { useState } from "react";
+import { useAuth } from "@/lib/AuthContext";
 
 interface SidebarItem {
   name: string;
@@ -32,9 +31,62 @@ interface SidebarGroup {
   items: SidebarItem[];
 }
 
+export const isRouteAllowed = (role: string | null, href: string): boolean => {
+  if (!role) return false;
+  if (role === "Admin") return true; // Admin has full access to all pages
+
+  switch (href) {
+    case "/":
+      return true; // Everyone can access the Dashboard
+
+    case "/employees":
+      // Admin, HR, Accounts Officer, Department Manager, Employee can view
+      return ["HR Manager", "Accounts Officer", "Department Manager", "Employee"].includes(role);
+
+    case "/attendance":
+      // Admin, HR, Accounts, Dept Manager, Employee, Management can view
+      return ["HR Manager", "Accounts Officer", "Department Manager", "Employee", "Management"].includes(role);
+
+    case "/shifts":
+      // Admin, HR, Accounts, Dept Manager, Management can view (Employees blocked)
+      return ["HR Manager", "Accounts Officer", "Department Manager", "Management"].includes(role);
+
+    case "/leave":
+      // Admin, HR, Accounts, Dept Manager, Employee, Management can view
+      return ["HR Manager", "Accounts Officer", "Department Manager", "Employee", "Management"].includes(role);
+
+    case "/overtime":
+      // Admin, HR, Accounts, Dept Manager can view
+      return ["HR Manager", "Accounts Officer", "Department Manager"].includes(role);
+
+    case "/payroll":
+      // Admin, HR, Accounts, Management can view (Dept Manager and Employee blocked)
+      return ["HR Manager", "Accounts Officer", "Management"].includes(role);
+
+    case "/allowances-deductions":
+      // Admin, HR, Accounts can view
+      return ["HR Manager", "Accounts Officer"].includes(role);
+
+    case "/payslips":
+      // Admin, HR, Accounts, Employee can view (Dept Manager, Management blocked)
+      return ["HR Manager", "Accounts Officer", "Employee"].includes(role);
+
+    case "/biostar-integration":
+      // Admin, HR can edit, Accounts and Dept Manager can view integration logs
+      return ["HR Manager", "Accounts Officer", "Department Manager"].includes(role);
+
+    case "/user-roles":
+      return false; // Handled by Admin fallback at top
+
+    default:
+      return false;
+  }
+};
+
 export default function Sidebar() {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
+  const { role } = useAuth();
 
   const menuGroups: SidebarGroup[] = [
     {
@@ -70,6 +122,14 @@ export default function Sidebar() {
     },
   ];
 
+  // Filter groups and items based on role permission
+  const filteredGroups = menuGroups
+    .map((group) => {
+      const items = group.items.filter((item) => isRouteAllowed(role, item.href));
+      return { ...group, items };
+    })
+    .filter((group) => group.items.length > 0);
+
   return (
     <aside
       className={`bg-sidebar-bg text-sidebar-fg flex flex-col transition-all duration-300 select-none border-r border-slate-800 ${
@@ -95,7 +155,7 @@ export default function Sidebar() {
         </div>
         <button
           onClick={() => setCollapsed(!collapsed)}
-          className="text-slate-400 hover:text-white p-1 rounded-md hover:bg-slate-800 hidden md:block"
+          className="text-slate-400 hover:text-white p-1 rounded-md hover:bg-slate-800 hidden md:block cursor-pointer"
         >
           {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
         </button>
@@ -103,7 +163,7 @@ export default function Sidebar() {
 
       {/* Navigation */}
       <div className="flex-1 py-4 overflow-y-auto px-3 space-y-6">
-        {menuGroups.map((group) => (
+        {filteredGroups.map((group) => (
           <div key={group.category} className="space-y-1">
             {!collapsed ? (
               <h3 className="px-3 text-[10px] font-bold tracking-wider text-slate-500 uppercase">
@@ -150,7 +210,7 @@ export default function Sidebar() {
       {/* Footer Info */}
       {!collapsed && (
         <div className="p-4 border-t border-slate-800 text-[10px] text-slate-500 text-center font-medium">
-          <p>© 2024 Payrollex System</p>
+          <p>© 2026 Payrollex System</p>
           <p className="mt-0.5">All rights reserved.</p>
         </div>
       )}
