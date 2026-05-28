@@ -87,17 +87,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Redirect to login if user is not authenticated and path is not /login
   useEffect(() => {
     if (!loading) {
-      if (!user && pathname !== "/login") {
-        router.push("/login");
-      } else if (user && pathname === "/login") {
-        router.push("/");
+      try {
+        if (!user && pathname !== "/login") {
+          router.push("/login");
+        } else if (user && pathname === "/login") {
+          router.push("/");
+        }
+      } catch {
+        // Swallow navigation errors (AbortError from superseded route transitions)
       }
     }
   }, [user, loading, pathname, router]);
 
   const logout = async () => {
     await signOut(auth);
-    router.push("/login");
+    // Navigation to /login is handled by the redirect useEffect above —
+    // do NOT call router.push() here to avoid duplicate/competing navigations
   };
 
   return (

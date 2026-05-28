@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "@/lib/firebase";
-import { useRouter } from "next/navigation";
+
 import { Fingerprint, Lock, Mail, AlertCircle, Eye, EyeOff } from "lucide-react";
 
 export default function LoginPage() {
@@ -12,7 +12,7 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const router = useRouter();
+
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -21,7 +21,8 @@ export default function LoginPage() {
 
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      router.push("/");
+      // Navigation is handled by AuthContext's redirect useEffect —
+      // do NOT call router.push() here to avoid duplicate/competing navigations
     } catch (err: any) {
       console.error("Login failed:", err);
       if (err.code === "auth/user-not-found" || err.code === "auth/invalid-email" || err.code === "auth/wrong-password" || err.code === "auth/invalid-credential") {
