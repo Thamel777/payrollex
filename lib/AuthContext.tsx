@@ -10,6 +10,7 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   role: string | null;
+  employeeId: string | null;
   permissionsMatrix: any[] | null;
   isAllowed: (href: string) => boolean;
   logout: () => Promise<void>;
@@ -19,6 +20,7 @@ const AuthContext = createContext<AuthContextType>({
   user: null,
   loading: true,
   role: null,
+  employeeId: null,
   permissionsMatrix: null,
   isAllowed: () => false,
   logout: async () => {},
@@ -144,6 +146,9 @@ export const checkPermission = (role: string | null, href: string, matrix: any[]
     case "/user-roles":
       return hasAccess("User & Role Management");
 
+    case "/profile":
+      return true;
+
     case "/debug-auth":
       return true;
 
@@ -174,6 +179,7 @@ const isAbortError = (e: unknown): boolean => {
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [role, setRole] = useState<string | null>(null);
+  const [employeeId, setEmployeeId] = useState<string | null>(null);
   const [permissionsMatrix, setPermissionsMatrix] = useState<any[] | null>(null);
   const [loading, setLoading] = useState(true);
   const isMounted = useRef(true);
@@ -197,9 +203,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const userDocRef = doc(db, "users", currentUser.uid);
           const userDoc = await getDoc(userDocRef);
           if (!isMounted.current) return; // Component unmounted during fetch
-          if (userDoc.exists() && userDoc.data().role) {
-            userRole = userDoc.data().role;
+          if (userDoc.exists()) {
+            if (userDoc.data().role) {
+              userRole = userDoc.data().role;
+            }
+            if (userDoc.data().employeeId) {
+              setEmployeeId(userDoc.data().employeeId);
+            } else {
+              setEmployeeId(null);
+            }
           } else {
+            setEmployeeId(null);
             // Write the user info to Firestore so they show up in user list
             await setDoc(userDocRef, {
               uid: currentUser.uid,
@@ -222,6 +236,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setRole(userRole);
       } else {
         setRole(null);
+        setEmployeeId(null);
         setPermissionsMatrix(null);
       }
       if (isMounted.current) setLoading(false);
@@ -259,7 +274,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, role, permissionsMatrix, isAllowed, logout }}>
+    <AuthContext.Provider value={{ user, loading, role, employeeId, permissionsMatrix, isAllowed, logout }}>
       {children}
     </AuthContext.Provider>
   );
