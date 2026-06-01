@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Users,
   Building,
@@ -15,21 +15,33 @@ import {
   Plus,
   Briefcase,
   FileSpreadsheet,
-  AlertCircle
+  AlertCircle,
+  Lock,
+  Mail,
+  Phone,
+  MapPin,
+  Calendar
 } from "lucide-react";
 import { mockEmployees, Employee } from "@/lib/mockData";
+import { useAuth } from "@/lib/AuthContext";
+import { db } from "@/lib/firebase";
+import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
 
 export default function EmployeesPage() {
+  const { user, role, employeeId } = useAuth();
+  
   const [searchTerm, setSearchTerm] = useState("");
   const [deptFilter, setDeptFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("All");
-  const [selectedEmp, setSelectedEmp] = useState<Employee | null>(mockEmployees[0]);
+  const [selectedEmp, setSelectedEmp] = useState<Employee | null>(null);
   const [activeTab, setActiveTab] = useState("personal");
-  const [employees, setEmployees] = useState<Employee[]>(mockEmployees);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // Modal / Add Employee Form State
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [newEmp, setNewEmp] = useState<Partial<Employee>>({
+  // Modal State
+  const [showModal, setShowModal] = useState(false);
+  const [modalMode, setModalMode] = useState<"add" | "edit">("add");
+  const [formEmp, setFormEmp] = useState<Partial<Employee>>({
     id: "",
     name: "",
     department: "IT Department",
@@ -46,9 +58,75 @@ export default function EmployeesPage() {
     salaryType: "Monthly",
     basicSalary: 0,
     epfNumber: "",
-    emergencyContact: { name: "", relationship: "", phone: "" },
-    address: ""
+    address: "",
+    email: "",
+    phone: "",
+    emergencyContact: { name: "", relationship: "", phone: "" }
   });
+
+  // Role Gating
+  const canAddEdit = role === "Admin" || role === "HR Manager";
+  const canDelete = role === "Admin" || role === "HR Manager";
+
+  // Check if current user is allowed to view salary of this specific employee
+  const canViewSalaryOf = (emp: Employee) => {
+    if (role === "Admin" || role === "HR Manager" || role === "Accounts Officer") {
+      return true;
+    }
+    // User viewing their own record
+    if (employeeId && employeeId === emp.id) {
+      return true;
+    }
+    if (user?.email && emp.email && user.email.toLowerCase() === emp.email.toLowerCase()) {
+      return true;
+    }
+    return false;
+  };
+
+  // Sync / load employees from Firestore (and seed if empty)
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "employees"), async (snapshot) => {
+      if (snapshot.empty) {
+        setLoading(true);
+        console.log("Employees collection is empty. Seeding mock data...");
+        try {
+          for (const emp of mockEmployees) {
+            await setDoc(doc(db, "employees", emp.id), emp);
+          }
+        } catch (e) {
+          console.error("Failed to seed employees:", e);
+        }
+      } else {
+        const list: Employee[] = [];
+        snapshot.forEach((doc) => {
+          list.push({ id: doc.id, ...doc.data() } as Employee);
+        });
+        
+        // Sort by employee ID prefix numerically if possible, otherwise string sort
+        list.sort((a, b) => {
+          const aNum = parseInt(a.id.replace(/\D/g, "")) || 0;
+          const bNum = parseInt(b.id.replace(/\D/g, "")) || 0;
+          return aNum - bNum;
+        });
+
+        setEmployees(list);
+        
+        // Handle selecting default / updated employee record
+        setSelectedEmp((prev) => {
+          if (prev) {
+            return list.find((e) => e.id === prev.id) || list[0] || null;
+          }
+          return list[0] || null;
+        });
+      }
+      setLoading(false);
+    }, (error) => {
+      console.error("Firestore onSnapshot subscription failed:", error);
+      setLoading(false);
+    });
+
+    return () => unsub();
+  }, []);
 
   // Extract unique departments for filters
   const departments = useMemo(() => {
@@ -61,30 +139,16 @@ export default function EmployeesPage() {
       const matchesSearch =
         emp.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         emp.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        emp.biostarId.includes(searchTerm);
+        (emp.biostarId && emp.biostarId.includes(searchTerm));
       const matchesDept = deptFilter === "All" || emp.department === deptFilter;
       const matchesStatus = statusFilter === "All" || emp.status === statusFilter;
       return matchesSearch && matchesDept && matchesStatus;
     });
   }, [employees, searchTerm, deptFilter, statusFilter]);
 
-  const handleAddEmployee = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newEmp.name || !newEmp.designation) {
-      alert("Please fill out name and designation");
-      return;
-    }
-    const id = `EMP00${employees.length + 1}`;
-    const freshEmployee: Employee = {
-      ...(newEmp as Employee),
-      id,
-      photo: newEmp.name.split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase()
-    };
-    setEmployees(prev => [...prev, freshEmployee]);
-    setSelectedEmp(freshEmployee);
-    setShowAddModal(false);
-    // Reset form
-    setNewEmp({
+  const handleOpenAdd = () => {
+    setModalMode("add");
+    setFormEmp({
       id: "",
       name: "",
       department: "IT Department",
@@ -97,23 +161,102 @@ export default function EmployeesPage() {
       gender: "Male",
       maritalStatus: "Single",
       nationality: "Sri Lankan",
-      joinedDate: "",
+      joinedDate: new Date().toISOString().split("T")[0],
       salaryType: "Monthly",
       basicSalary: 0,
       epfNumber: "",
-      emergencyContact: { name: "", relationship: "", phone: "" },
-      address: ""
+      address: "",
+      email: "",
+      phone: "",
+      emergencyContact: { name: "", relationship: "", phone: "" }
     });
+    setShowModal(true);
   };
 
-  const handleDeleteEmployee = (id: string) => {
+  const handleOpenEdit = (emp: Employee) => {
+    setModalMode("edit");
+    // Ensure all optional fields exist in the form state
+    setFormEmp({
+      ...emp,
+      emergencyContact: emp.emergencyContact || { name: "", relationship: "", phone: "" }
+    });
+    setShowModal(true);
+  };
+
+  const handleSubmitForm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formEmp.name || !formEmp.designation) {
+      alert("Please fill out name and designation");
+      return;
+    }
+
+    try {
+      if (modalMode === "add") {
+        // Generate automatic employee ID prefixing EMP followed by 3 digits
+        let nextIdNum = 1;
+        if (employees.length > 0) {
+          const numericIds = employees
+            .map(emp => {
+              const match = emp.id.match(/\d+/);
+              return match ? parseInt(match[0]) : 0;
+            })
+            .filter(n => n > 0);
+          if (numericIds.length > 0) {
+            nextIdNum = Math.max(...numericIds) + 1;
+          }
+        }
+        const newId = `EMP${String(nextIdNum).padStart(3, "0")}`;
+        const photoInitials = formEmp.name.split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase();
+
+        const freshEmployee: Employee = {
+          ...(formEmp as Employee),
+          id: newId,
+          photo: photoInitials,
+          basicSalary: Number(formEmp.basicSalary) || 0
+        };
+
+        await setDoc(doc(db, "employees", newId), freshEmployee);
+        setSelectedEmp(freshEmployee);
+      } else {
+        const id = formEmp.id!;
+        const updatedData = {
+          ...formEmp,
+          basicSalary: Number(formEmp.basicSalary) || 0
+        };
+        // Remove document id before writing to payload
+        delete updatedData.id;
+
+        await updateDoc(doc(db, "employees", id), updatedData);
+      }
+      setShowModal(false);
+    } catch (err) {
+      console.error("Error saving employee record:", err);
+      alert("Error saving record: " + (err as Error).message);
+    }
+  };
+
+  const handleDeleteEmployee = async (id: string) => {
     if (confirm(`Are you sure you want to delete employee ${id}?`)) {
-      setEmployees(prev => prev.filter(emp => emp.id !== id));
-      if (selectedEmp?.id === id) {
-        setSelectedEmp(null);
+      try {
+        await deleteDoc(doc(db, "employees", id));
+        if (selectedEmp?.id === id) {
+          setSelectedEmp(null);
+        }
+      } catch (err) {
+        console.error("Error deleting employee:", err);
+        alert("Failed to delete record: " + (err as Error).message);
       }
     }
   };
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[50vh] text-slate-500 font-semibold text-xs">
+        <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-3"></div>
+        <span>Syncing employees with database...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -221,12 +364,14 @@ export default function EmployeesPage() {
                 <button className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-50 flex items-center gap-1.5 transition-colors cursor-pointer">
                   <Download className="h-4 w-4" /> Export
                 </button>
-                <button
-                  onClick={() => setShowAddModal(true)}
-                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-lg flex items-center gap-1.5 transition-all shadow-md shadow-blue-500/10 cursor-pointer"
-                >
-                  <Plus className="h-4 w-4" /> Add Employee
-                </button>
+                {canAddEdit && (
+                  <button
+                    onClick={handleOpenAdd}
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-lg flex items-center gap-1.5 transition-all shadow-md shadow-blue-500/10 cursor-pointer"
+                  >
+                    <Plus className="h-4 w-4" /> Add Employee
+                  </button>
+                )}
               </div>
             </div>
 
@@ -295,19 +440,24 @@ export default function EmployeesPage() {
                             >
                               <Eye className="h-4 w-4" />
                             </button>
-                            <button
-                              className="p-1 text-slate-400 hover:text-indigo-600 rounded-md hover:bg-slate-100 transition-colors"
-                              title="Edit Details"
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteEmployee(emp.id)}
-                              className="p-1 text-slate-400 hover:text-rose-600 rounded-md hover:bg-slate-100 transition-colors"
-                              title="Delete Record"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
+                            {canAddEdit && (
+                              <button
+                                onClick={() => handleOpenEdit(emp)}
+                                className="p-1 text-slate-400 hover:text-indigo-600 rounded-md hover:bg-slate-100 transition-colors"
+                                title="Edit Details"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </button>
+                            )}
+                            {canDelete && (
+                              <button
+                                onClick={() => handleDeleteEmployee(emp.id)}
+                                className="p-1 text-slate-400 hover:text-rose-600 rounded-md hover:bg-slate-100 transition-colors"
+                                title="Delete Record"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -442,14 +592,10 @@ export default function EmployeesPage() {
                       <span className="font-bold text-slate-700">{selectedEmp.salaryType}</span>
                     </div>
                     <div className="flex justify-between border-b border-slate-50 pb-2">
-                      <span className="text-slate-400 font-semibold">Basic Salary</span>
-                      <span className="font-bold text-slate-700">LKR {selectedEmp.basicSalary.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between border-b border-slate-50 pb-2">
                       <span className="text-slate-400 font-semibold">BioStar 2 User ID</span>
                       <span className="font-bold text-blue-600 flex items-center gap-1">
                         <Fingerprint className="h-4 w-4 shrink-0" />
-                        {selectedEmp.biostarId}
+                        {selectedEmp.biostarId || "Not Mapped"}
                       </span>
                     </div>
                   </div>
@@ -457,36 +603,64 @@ export default function EmployeesPage() {
 
                 {activeTab === "bank" && (
                   <div className="space-y-3.5 text-xs">
-                    <div className="flex justify-between border-b border-slate-50 pb-2">
-                      <span className="text-slate-400 font-semibold">EPF Number</span>
-                      <span className="font-bold text-slate-700">{selectedEmp.epfNumber}</span>
-                    </div>
-                    <div className="flex justify-between border-b border-slate-50 pb-2">
-                      <span className="text-slate-400 font-semibold">Bank Name</span>
-                      <span className="font-bold text-slate-700">Commercial Bank</span>
-                    </div>
-                    <div className="flex justify-between border-b border-slate-50 pb-2">
-                      <span className="text-slate-400 font-semibold">Account Number</span>
-                      <span className="font-bold text-slate-700">1234 5678 9012</span>
-                    </div>
+                    {canViewSalaryOf(selectedEmp) ? (
+                      <>
+                        <div className="flex justify-between border-b border-slate-50 pb-2">
+                          <span className="text-slate-400 font-semibold">EPF Number</span>
+                          <span className="font-bold text-slate-700">{selectedEmp.epfNumber || "N/A"}</span>
+                        </div>
+                        <div className="flex justify-between border-b border-slate-50 pb-2">
+                          <span className="text-slate-400 font-semibold">ETF Number</span>
+                          <span className="font-bold text-slate-700">{(selectedEmp as any).etfNumber || "N/A"}</span>
+                        </div>
+                        <div className="flex justify-between border-b border-slate-50 pb-2">
+                          <span className="text-slate-400 font-semibold">Bank Name</span>
+                          <span className="font-bold text-slate-700">{(selectedEmp as any).bankName || "Commercial Bank"}</span>
+                        </div>
+                        <div className="flex justify-between border-b border-slate-50 pb-2">
+                          <span className="text-slate-400 font-semibold">Account Number</span>
+                          <span className="font-bold text-slate-700">{(selectedEmp as any).bankAccount || "1234 5678 9012"}</span>
+                        </div>
+                        <div className="flex justify-between border-b border-slate-50 pb-2">
+                          <span className="text-slate-400 font-semibold">Basic Salary</span>
+                          <span className="font-bold text-slate-700">LKR {selectedEmp.basicSalary ? selectedEmp.basicSalary.toLocaleString() : "0.00"}</span>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="py-6 text-center text-slate-400 space-y-2">
+                        <Lock className="h-8 w-8 mx-auto text-slate-300" />
+                        <p className="font-bold text-slate-600">Details Restricted</p>
+                        <p className="text-[10px] text-slate-400 max-w-[180px] mx-auto leading-normal">
+                          You do not have permission to view salary and bank information.
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
 
                 {activeTab === "contact" && (
                   <div className="space-y-3.5 text-xs">
+                    <div className="flex justify-between border-b border-slate-50 pb-2">
+                      <span className="text-slate-400 font-semibold">Email</span>
+                      <span className="font-bold text-slate-700">{selectedEmp.email || "N/A"}</span>
+                    </div>
+                    <div className="flex justify-between border-b border-slate-50 pb-2">
+                      <span className="text-slate-400 font-semibold">Phone</span>
+                      <span className="font-bold text-slate-700">{selectedEmp.phone || "N/A"}</span>
+                    </div>
                     <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-2">
                       <p className="text-[10px] text-slate-400 font-bold uppercase">Emergency Contact</p>
                       <div className="flex justify-between text-xs">
                         <span className="text-slate-500">Name</span>
-                        <span className="font-bold text-slate-700">{selectedEmp.emergencyContact.name}</span>
+                        <span className="font-bold text-slate-700">{selectedEmp.emergencyContact?.name || "N/A"}</span>
                       </div>
                       <div className="flex justify-between text-xs">
                         <span className="text-slate-500">Relationship</span>
-                        <span className="font-bold text-slate-700">{selectedEmp.emergencyContact.relationship}</span>
+                        <span className="font-bold text-slate-700">{selectedEmp.emergencyContact?.relationship || "N/A"}</span>
                       </div>
                       <div className="flex justify-between text-xs">
                         <span className="text-slate-500">Contact Number</span>
-                        <span className="font-bold text-blue-600">{selectedEmp.emergencyContact.phone}</span>
+                        <span className="font-bold text-blue-600">{selectedEmp.emergencyContact?.phone || "N/A"}</span>
                       </div>
                     </div>
                     <div className="flex flex-col gap-1">
@@ -499,9 +673,14 @@ export default function EmployeesPage() {
 
               {/* Action drawer footer */}
               <div className="p-4 border-t border-slate-100 bg-slate-50 flex gap-2">
-                <button className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-lg transition-all shadow-md shadow-blue-500/10 cursor-pointer">
-                  Edit Profile
-                </button>
+                {canAddEdit && (
+                  <button
+                    onClick={() => handleOpenEdit(selectedEmp)}
+                    className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-lg transition-all shadow-md shadow-blue-500/10 cursor-pointer"
+                  >
+                    Edit Profile
+                  </button>
+                )}
                 <button
                   onClick={() => setSelectedEmp(null)}
                   className="px-3.5 py-2 border border-slate-200 text-slate-500 hover:text-slate-800 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
@@ -526,128 +705,347 @@ export default function EmployeesPage() {
         </div>
       </div>
 
-      {/* Add Employee Modal */}
-      {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs select-none">
-          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl border border-slate-100 flex flex-col max-h-[90vh]">
+      {/* Add / Edit Employee Modal */}
+      {showModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs select-none p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl border border-slate-100 flex flex-col max-h-[90vh]">
             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-2xl">
               <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
-                <UserPlus className="h-4.5 w-4.5 text-blue-600" />
-                Add New Employee Profile
+                {modalMode === "add" ? (
+                  <>
+                    <UserPlus className="h-4.5 w-4.5 text-blue-600" />
+                    Add New Employee Profile
+                  </>
+                ) : (
+                  <>
+                    <Pencil className="h-4.5 w-4.5 text-blue-600" />
+                    Edit Employee Profile (ID: {formEmp.id})
+                  </>
+                )}
               </h3>
               <button
-                onClick={() => setShowAddModal(false)}
+                onClick={() => setShowModal(false)}
                 className="text-slate-400 hover:text-slate-800 p-1 rounded-md hover:bg-slate-100"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <form onSubmit={handleAddEmployee} className="flex-1 overflow-y-auto p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2 space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Full Name</label>
-                  <input
-                    type="text"
-                    required
-                    value={newEmp.name}
-                    onChange={(e) => setNewEmp(prev => ({ ...prev, name: e.target.value }))}
-                    placeholder="E.g. Nimal Perera"
-                    className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-700 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Department</label>
-                  <select
-                    value={newEmp.department}
-                    onChange={(e) => setNewEmp(prev => ({ ...prev, department: e.target.value }))}
-                    className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-600 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  >
-                    <option value="IT Department">IT Department</option>
-                    <option value="HR Department">HR Department</option>
-                    <option value="Finance Department">Finance Department</option>
-                    <option value="Marketing Department">Marketing Department</option>
-                    <option value="Operations Department">Operations Department</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Designation</label>
-                  <input
-                    type="text"
-                    required
-                    value={newEmp.designation}
-                    onChange={(e) => setNewEmp(prev => ({ ...prev, designation: e.target.value }))}
-                    placeholder="E.g. Senior Software Engineer"
-                    className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-700 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">NIC / Passport</label>
-                  <input
-                    type="text"
-                    required
-                    value={newEmp.nic}
-                    onChange={(e) => setNewEmp(prev => ({ ...prev, nic: e.target.value }))}
-                    placeholder="E.g. 199123456789"
-                    className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-700 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date of Birth</label>
-                  <input
-                    type="date"
-                    required
-                    value={newEmp.dob}
-                    onChange={(e) => setNewEmp(prev => ({ ...prev, dob: e.target.value }))}
-                    className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-600 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Gender</label>
-                  <select
-                    value={newEmp.gender}
-                    onChange={(e) => setNewEmp(prev => ({ ...prev, gender: e.target.value }))}
-                    className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-600 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  >
-                    <option value="Male">Male</option>
-                    <option value="Female">Female</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">BioStar ID</label>
-                  <input
-                    type="text"
-                    value={newEmp.biostarId}
-                    onChange={(e) => setNewEmp(prev => ({ ...prev, biostarId: e.target.value }))}
-                    placeholder="E.g. 1009"
-                    className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-700 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Basic Salary (LKR)</label>
-                  <input
-                    type="number"
-                    required
-                    value={newEmp.basicSalary}
-                    onChange={(e) => setNewEmp(prev => ({ ...prev, basicSalary: parseFloat(e.target.value) || 0 }))}
-                    placeholder="Basic salary amount"
-                    className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-700 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">EPF Number</label>
-                  <input
-                    type="text"
-                    value={newEmp.epfNumber}
-                    onChange={(e) => setNewEmp(prev => ({ ...prev, epfNumber: e.target.value }))}
-                    placeholder="E.g. 9876543"
-                    className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-700 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
+            <form onSubmit={handleSubmitForm} className="flex-1 overflow-y-auto p-6 space-y-6">
+              
+              {/* SECTION 1: Personal Details */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-extrabold text-blue-600 uppercase tracking-wider border-b border-slate-100 pb-1">1. Personal Info</h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="md:col-span-2 space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Full Name</label>
+                    <input
+                      type="text"
+                      required
+                      value={formEmp.name || ""}
+                      onChange={(e) => setFormEmp(prev => ({ ...prev, name: e.target.value }))}
+                      placeholder="E.g. Nimal Perera"
+                      className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-700 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">NIC / Passport</label>
+                    <input
+                      type="text"
+                      required
+                      value={formEmp.nic || ""}
+                      onChange={(e) => setFormEmp(prev => ({ ...prev, nic: e.target.value }))}
+                      placeholder="E.g. 199123456789"
+                      className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-700 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date of Birth</label>
+                    <input
+                      type="date"
+                      required
+                      value={formEmp.dob || ""}
+                      onChange={(e) => setFormEmp(prev => ({ ...prev, dob: e.target.value }))}
+                      className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-600 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Gender</label>
+                    <select
+                      value={formEmp.gender || "Male"}
+                      onChange={(e) => setFormEmp(prev => ({ ...prev, gender: e.target.value }))}
+                      className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-600 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Marital Status</label>
+                    <select
+                      value={formEmp.maritalStatus || "Single"}
+                      onChange={(e) => setFormEmp(prev => ({ ...prev, maritalStatus: e.target.value }))}
+                      className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-600 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      <option value="Single">Single</option>
+                      <option value="Married">Married</option>
+                      <option value="Divorced">Divorced</option>
+                      <option value="Widowed">Widowed</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Nationality</label>
+                    <input
+                      type="text"
+                      required
+                      value={formEmp.nationality || "Sri Lankan"}
+                      onChange={(e) => setFormEmp(prev => ({ ...prev, nationality: e.target.value }))}
+                      className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-700 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
                 </div>
               </div>
-              <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2 bg-slate-50 -mx-6 -mb-6 rounded-b-2xl mt-4">
+
+              {/* SECTION 2: Job details */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-extrabold text-blue-600 uppercase tracking-wider border-b border-slate-100 pb-1">2. Job & Integration Details</h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Department</label>
+                    <select
+                      value={formEmp.department || "IT Department"}
+                      onChange={(e) => setFormEmp(prev => ({ ...prev, department: e.target.value }))}
+                      className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-600 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      <option value="IT Department">IT Department</option>
+                      <option value="HR Department">HR Department</option>
+                      <option value="Finance Department">Finance Department</option>
+                      <option value="Marketing Department">Marketing Department</option>
+                      <option value="Operations Department">Operations Department</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Designation</label>
+                    <input
+                      type="text"
+                      required
+                      value={formEmp.designation || ""}
+                      onChange={(e) => setFormEmp(prev => ({ ...prev, designation: e.target.value }))}
+                      placeholder="E.g. Senior Software Engineer"
+                      className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-700 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Employment Type</label>
+                    <select
+                      value={formEmp.type || "Permanent"}
+                      onChange={(e) => setFormEmp(prev => ({ ...prev, type: e.target.value as any }))}
+                      className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-600 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      <option value="Permanent">Permanent</option>
+                      <option value="Contract">Contract</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Employment Status</label>
+                    <select
+                      value={formEmp.status || "Active"}
+                      onChange={(e) => setFormEmp(prev => ({ ...prev, status: e.target.value as any }))}
+                      className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-600 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      <option value="Active">Active</option>
+                      <option value="Inactive">Inactive</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date of Joining</label>
+                    <input
+                      type="date"
+                      required
+                      value={formEmp.joinedDate || ""}
+                      onChange={(e) => setFormEmp(prev => ({ ...prev, joinedDate: e.target.value }))}
+                      className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-600 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">BioStar 2 ID (Fingerprint)</label>
+                    <input
+                      type="text"
+                      value={formEmp.biostarId || ""}
+                      onChange={(e) => setFormEmp(prev => ({ ...prev, biostarId: e.target.value }))}
+                      placeholder="E.g. 1009"
+                      className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-700 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* SECTION 3: Salary & Bank details */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-extrabold text-blue-600 uppercase tracking-wider border-b border-slate-100 pb-1">3. Compensation & EPF Details</h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Salary Contract Type</label>
+                    <select
+                      value={formEmp.salaryType || "Monthly"}
+                      onChange={(e) => setFormEmp(prev => ({ ...prev, salaryType: e.target.value }))}
+                      className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-600 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      <option value="Monthly">Monthly</option>
+                      <option value="Daily">Daily</option>
+                      <option value="Hourly">Hourly</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Basic Salary (LKR)</label>
+                    <input
+                      type="number"
+                      required
+                      value={formEmp.basicSalary || 0}
+                      onChange={(e) => setFormEmp(prev => ({ ...prev, basicSalary: parseFloat(e.target.value) || 0 }))}
+                      placeholder="Basic salary amount"
+                      className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-700 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">EPF Number</label>
+                    <input
+                      type="text"
+                      value={formEmp.epfNumber || ""}
+                      onChange={(e) => setFormEmp(prev => ({ ...prev, epfNumber: e.target.value }))}
+                      placeholder="E.g. 9876543"
+                      className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-700 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">ETF Number</label>
+                    <input
+                      type="text"
+                      value={(formEmp as any).etfNumber || ""}
+                      onChange={(e) => setFormEmp(prev => ({ ...prev, etfNumber: e.target.value }))}
+                      placeholder="E.g. 9876543-A"
+                      className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-700 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Bank Name</label>
+                    <input
+                      type="text"
+                      value={(formEmp as any).bankName || ""}
+                      onChange={(e) => setFormEmp(prev => ({ ...prev, bankName: e.target.value }))}
+                      placeholder="E.g. Commercial Bank"
+                      className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-700 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Bank Account</label>
+                    <input
+                      type="text"
+                      value={(formEmp as any).bankAccount || ""}
+                      onChange={(e) => setFormEmp(prev => ({ ...prev, bankAccount: e.target.value }))}
+                      placeholder="E.g. 10100020202"
+                      className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-700 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* SECTION 4: Contact details */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-extrabold text-blue-600 uppercase tracking-wider border-b border-slate-100 pb-1">4. Contact & Address Details</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Email Address</label>
+                    <input
+                      type="email"
+                      required
+                      value={formEmp.email || ""}
+                      onChange={(e) => setFormEmp(prev => ({ ...prev, email: e.target.value }))}
+                      placeholder="employee@kawdoco.com"
+                      className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-700 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Phone Number</label>
+                    <input
+                      type="text"
+                      required
+                      value={formEmp.phone || ""}
+                      onChange={(e) => setFormEmp(prev => ({ ...prev, phone: e.target.value }))}
+                      placeholder="E.g. 077 123 4567"
+                      className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-700 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div className="md:col-span-2 space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Residential Address</label>
+                    <input
+                      type="text"
+                      required
+                      value={formEmp.address || ""}
+                      onChange={(e) => setFormEmp(prev => ({ ...prev, address: e.target.value }))}
+                      placeholder="Street, City, Country"
+                      className="w-full border border-slate-200 rounded-lg text-xs font-semibold px-3 py-2 text-slate-700 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3 mt-3">
+                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Emergency Contact Person</p>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="space-y-0.5">
+                      <label className="text-[9px] font-bold text-slate-400">Contact Name</label>
+                      <input
+                        type="text"
+                        value={formEmp.emergencyContact?.name || ""}
+                        onChange={(e) => setFormEmp(prev => ({
+                          ...prev,
+                          emergencyContact: {
+                            ...prev.emergencyContact!,
+                            name: e.target.value
+                          }
+                        }))}
+                        className="w-full border border-slate-200 bg-white rounded-md text-xs px-2.5 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 font-semibold"
+                      />
+                    </div>
+                    <div className="space-y-0.5">
+                      <label className="text-[9px] font-bold text-slate-400">Relationship</label>
+                      <input
+                        type="text"
+                        value={formEmp.emergencyContact?.relationship || ""}
+                        onChange={(e) => setFormEmp(prev => ({
+                          ...prev,
+                          emergencyContact: {
+                            ...prev.emergencyContact!,
+                            relationship: e.target.value
+                          }
+                        }))}
+                        className="w-full border border-slate-200 bg-white rounded-md text-xs px-2.5 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 font-semibold"
+                      />
+                    </div>
+                    <div className="space-y-0.5">
+                      <label className="text-[9px] font-bold text-slate-400">Contact Phone</label>
+                      <input
+                        type="text"
+                        value={formEmp.emergencyContact?.phone || ""}
+                        onChange={(e) => setFormEmp(prev => ({
+                          ...prev,
+                          emergencyContact: {
+                            ...prev.emergencyContact!,
+                            phone: e.target.value
+                          }
+                        }))}
+                        className="w-full border border-slate-200 bg-white rounded-md text-xs px-2.5 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 font-semibold"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Actions Footer */}
+              <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2 bg-slate-50 -mx-6 -mb-6 rounded-b-2xl mt-4 shrink-0">
                 <button
                   type="button"
-                  onClick={() => setShowAddModal(false)}
+                  onClick={() => setShowModal(false)}
                   className="px-4 py-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors"
                 >
                   Cancel
@@ -656,7 +1054,7 @@ export default function EmployeesPage() {
                   type="submit"
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-lg transition-all shadow-md shadow-blue-500/10"
                 >
-                  Save Employee
+                  {modalMode === "add" ? "Save Employee" : "Save Changes"}
                 </button>
               </div>
             </form>

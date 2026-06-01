@@ -22,6 +22,8 @@ export interface Employee {
     phone: string;
   };
   address: string;
+  email?: string;
+  phone?: string;
 }
 
 export interface Shift {
@@ -96,7 +98,9 @@ export const mockEmployees: Employee[] = [
       relationship: "Brother",
       phone: "077 123 4567"
     },
-    address: "123, Galle Road, Colombo 04, Sri Lanka"
+    address: "123, Galle Road, Colombo 04, Sri Lanka",
+    email: "nimal@kawdoco.com",
+    phone: "077 123 4567"
   },
   {
     id: "EMP002",
@@ -121,7 +125,9 @@ export const mockEmployees: Employee[] = [
       relationship: "Mother",
       phone: "071 987 6543"
     },
-    address: "45/A, Kandy Road, Kiribathgoda, Sri Lanka"
+    address: "45/A, Kandy Road, Kiribathgoda, Sri Lanka",
+    email: "kavindi@kawdoco.com",
+    phone: "071 987 6543"
   },
   {
     id: "EMP003",
@@ -146,7 +152,9 @@ export const mockEmployees: Employee[] = [
       relationship: "Spouse",
       phone: "076 555 1234"
     },
-    address: "88, Duplication Road, Colombo 03, Sri Lanka"
+    address: "88, Duplication Road, Colombo 03, Sri Lanka",
+    email: "minura@kawdoco.com",
+    phone: "076 555 1234"
   },
   {
     id: "EMP004",
@@ -171,7 +179,9 @@ export const mockEmployees: Employee[] = [
       relationship: "Father",
       phone: "077 777 8888"
     },
-    address: "12, Negombo Road, Wattala, Sri Lanka"
+    address: "12, Negombo Road, Wattala, Sri Lanka",
+    email: "tharushi@kawdoco.com",
+    phone: "077 777 8888"
   },
   {
     id: "EMP005",
@@ -196,7 +206,9 @@ export const mockEmployees: Employee[] = [
       relationship: "Spouse",
       phone: "072 111 2222"
     },
-    address: "99/1, High Level Road, Maharagama, Sri Lanka"
+    address: "99/1, High Level Road, Maharagama, Sri Lanka",
+    email: "kasun@kawdoco.com",
+    phone: "072 111 2222"
   },
   {
     id: "EMP006",
@@ -221,7 +233,9 @@ export const mockEmployees: Employee[] = [
       relationship: "Uncle",
       phone: "075 444 8888"
     },
-    address: "312, Horana Road, Kesbewa, Sri Lanka"
+    address: "312, Horana Road, Kesbewa, Sri Lanka",
+    email: "isuri@kawdoco.com",
+    phone: "075 444 8888"
   },
   {
     id: "EMP007",
@@ -246,7 +260,9 @@ export const mockEmployees: Employee[] = [
       relationship: "Father",
       phone: "077 999 1111"
     },
-    address: "15, Havelock Road, Colombo 05, Sri Lanka"
+    address: "15, Havelock Road, Colombo 05, Sri Lanka",
+    email: "ravindu@kawdoco.com",
+    phone: "077 999 1111"
   },
   {
     id: "EMP008",
@@ -271,7 +287,9 @@ export const mockEmployees: Employee[] = [
       relationship: "Mother",
       phone: "078 444 5555"
     },
-    address: "24, Parliament Road, Kotte, Sri Lanka"
+    address: "24, Parliament Road, Kotte, Sri Lanka",
+    email: "pavithra@kawdoco.com",
+    phone: "078 444 5555"
   }
 ];
 

@@ -4,6 +4,7 @@ import { Bell, Search, ChevronDown, User, LogOut, Settings, Award } from "lucide
 import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/AuthContext";
+import Link from "next/link";
 
 export default function Header() {
   const pathname = usePathname();
@@ -36,6 +37,8 @@ export default function Header() {
         return "BioStar 2 Fingerprint Integration";
       case "/user-roles":
         return "User Roles & Permissions";
+      case "/profile":
+        return "My Profile";
       default:
         return "Payrollex System";
     }
@@ -155,10 +158,14 @@ export default function Header() {
                 </p>
                 <p className="text-[9px] text-slate-400 truncate">{user?.email || "user@payrollex.com"}</p>
               </div>
-              <button className="w-full px-4 py-2 hover:bg-slate-50 text-left text-xs font-medium text-slate-700 flex items-center gap-2 transition-colors">
+              <Link
+                href="/profile"
+                onClick={() => setShowProfileMenu(false)}
+                className="w-full px-4 py-2 hover:bg-slate-50 text-left text-xs font-medium text-slate-700 flex items-center gap-2 transition-colors"
+              >
                 <User className="h-4 w-4 text-slate-400" />
                 My Profile
-              </button>
+              </Link>
               <button className="w-full px-4 py-2 hover:bg-slate-50 text-left text-xs font-medium text-slate-700 flex items-center gap-2 transition-colors">
                 <Settings className="h-4 w-4 text-slate-400" />
                 System Settings

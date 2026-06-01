@@ -1,6 +1,6 @@
 "use client";
 
-import Sidebar, { isRouteAllowed } from "./Sidebar";
+import Sidebar from "./Sidebar";
 import Header from "./Header";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/AuthContext";
@@ -13,7 +13,7 @@ interface DashboardLayoutProps {
 
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const pathname = usePathname();
-  const { loading, user, role } = useAuth();
+  const { loading, user, role, isAllowed } = useAuth();
   
   const isLoginPage = pathname === "/login";
 
@@ -60,9 +60,9 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   }
 
   // Check if route is allowed for user's role
-  const isAllowed = isRouteAllowed(role, pathname);
+  const allowed = isAllowed(pathname);
 
-  if (!isAllowed) {
+  if (!allowed) {
     return (
       <div className="flex w-full min-h-screen bg-slate-50 overflow-hidden font-sans">
         {/* Sidebar Navigation */}
