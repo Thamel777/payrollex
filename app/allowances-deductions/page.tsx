@@ -16,13 +16,16 @@ import {
   CheckSquare
 } from "lucide-react";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
-import { mockAllowances, mockDeductions } from "@/lib/mockData";
+import { mockAllowances, mockDeductions, Employee } from "@/lib/mockData";
 import Portal from "@/components/Portal";
+import { db } from "@/lib/firebase";
+import { collection, doc, onSnapshot, setDoc, updateDoc } from "firebase/firestore";
 
 export default function AllowancesDeductionsPage() {
   const [mounted, setMounted] = useState(false);
-  const [allowances, setAllowances] = useState(mockAllowances);
-  const [deductions, setDeductions] = useState(mockDeductions);
+  const [allowances, setAllowances] = useState<any[]>([]);
+  const [deductions, setDeductions] = useState<any[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
 
   const [allowancePage, setAllowancePage] = useState(1);
@@ -33,6 +36,12 @@ export default function AllowancesDeductionsPage() {
   // Modals state
   const [showAddAllowance, setShowAddAllowance] = useState(false);
   const [showAddDeduction, setShowAddDeduction] = useState(false);
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [selectedEmp, setSelectedEmp] = useState<Employee | null>(null);
+
+  // Assignment selections
+  const [assignedAllowances, setAssignedAllowances] = useState<string[]>([]);
+  const [assignedDeductions, setAssignedDeductions] = useState<string[]>([]);
 
   // Form state
   const [formName, setFormName] = useState("");
@@ -42,13 +51,50 @@ export default function AllowancesDeductionsPage() {
 
   useEffect(() => {
     setMounted(true);
+
+    // 1. Sync allowances & deductions settings from Firestore
+    const unsubSettings = onSnapshot(doc(db, "settings", "allowances_deductions"), async (docSnap) => {
+      if (!docSnap.exists()) {
+        try {
+          await setDoc(doc(db, "settings", "allowances_deductions"), {
+            allowances: mockAllowances,
+            deductions: mockDeductions
+          });
+        } catch (err) {
+          console.error("Failed to seed allowances & deductions settings:", err);
+        }
+      } else {
+        const data = docSnap.data();
+        if (data.allowances) setAllowances(data.allowances);
+        if (data.deductions) setDeductions(data.deductions);
+      }
+    });
+
+    // 2. Sync employees list from Firestore
+    const unsubEmployees = onSnapshot(collection(db, "employees"), (snapshot) => {
+      const list: Employee[] = [];
+      snapshot.forEach((doc) => {
+        list.push({ id: doc.id, ...doc.data() } as Employee);
+      });
+      list.sort((a, b) => {
+        const aNum = parseInt(a.id.replace(/\D/g, "")) || 0;
+        const bNum = parseInt(b.id.replace(/\D/g, "")) || 0;
+        return aNum - bNum;
+      });
+      setEmployees(list);
+    });
+
+    return () => {
+      unsubSettings();
+      unsubEmployees();
+    };
   }, []);
 
-  const handleAddAllowance = (e: React.FormEvent) => {
+  const handleAddAllowance = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formName) return;
     const fresh = {
-      id: allowances.length + 1,
+      id: allowances.length > 0 ? Math.max(...allowances.map(a => a.id)) + 1 : 1,
       name: formName,
       description: formDesc,
       type: formCalcType,
@@ -56,16 +102,24 @@ export default function AllowancesDeductionsPage() {
       amount: formAmount,
       status: "Active"
     };
-    setAllowances(prev => [...prev, fresh]);
-    setShowAddAllowance(false);
-    resetForm();
+    const updated = [...allowances, fresh];
+    try {
+      await setDoc(doc(db, "settings", "allowances_deductions"), {
+        allowances: updated,
+        deductions
+      });
+      setShowAddAllowance(false);
+      resetForm();
+    } catch (err) {
+      console.error("Failed to add allowance:", err);
+    }
   };
 
-  const handleAddDeduction = (e: React.FormEvent) => {
+  const handleAddDeduction = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formName) return;
     const fresh = {
-      id: deductions.length + 1,
+      id: deductions.length > 0 ? Math.max(...deductions.map(d => d.id)) + 1 : 1,
       name: formName,
       description: formDesc,
       type: formCalcType,
@@ -73,9 +127,63 @@ export default function AllowancesDeductionsPage() {
       amount: formAmount,
       status: "Active"
     };
-    setDeductions(prev => [...prev, fresh]);
-    setShowAddDeduction(false);
-    resetForm();
+    const updated = [...deductions, fresh];
+    try {
+      await setDoc(doc(db, "settings", "allowances_deductions"), {
+        allowances,
+        deductions: updated
+      });
+      setShowAddDeduction(false);
+      resetForm();
+    } catch (err) {
+      console.error("Failed to add deduction:", err);
+    }
+  };
+
+  const handleDeleteAllowance = async (id: number) => {
+    const updated = allowances.filter(a => a.id !== id);
+    try {
+      await setDoc(doc(db, "settings", "allowances_deductions"), {
+        allowances: updated,
+        deductions
+      });
+    } catch (err) {
+      console.error("Failed to delete allowance:", err);
+    }
+  };
+
+  const handleDeleteDeduction = async (id: number) => {
+    const updated = deductions.filter(d => d.id !== id);
+    try {
+      await setDoc(doc(db, "settings", "allowances_deductions"), {
+        allowances,
+        deductions: updated
+      });
+    } catch (err) {
+      console.error("Failed to delete deduction:", err);
+    }
+  };
+
+  const handleOpenAssign = (emp: Employee) => {
+    setSelectedEmp(emp);
+    setAssignedAllowances((emp as any).allowances || []);
+    setAssignedDeductions((emp as any).deductions || []);
+    setShowAssignModal(true);
+  };
+
+  const handleSaveAssignment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedEmp) return;
+    try {
+      await updateDoc(doc(db, "employees", selectedEmp.id), {
+        allowances: assignedAllowances,
+        deductions: assignedDeductions
+      });
+      setShowAssignModal(false);
+      setSelectedEmp(null);
+    } catch (err) {
+      console.error("Failed to save assignments to employee:", err);
+    }
   };
 
   const resetForm = () => {
@@ -120,13 +228,29 @@ export default function AllowancesDeductionsPage() {
   }, [deductions]);
 
   // Employee Preview logs
-  const employeePreview = [
-    { id: "EMP001", name: "Nimal Perera", dept: "IT Department", allowance: 75000, deduction: 85000, net: -10000 },
-    { id: "EMP002", name: "Kavindi Silva", dept: "HR Department", allowance: 65000, deduction: 70000, net: -5000 },
-    { id: "EMP003", name: "Minura Fernando", dept: "Finance Department", allowance: 80000, deduction: 95000, net: -15000 },
-    { id: "EMP004", name: "Tharushi De Silva", dept: "Marketing Department", allowance: 60000, deduction: 55000, net: 5000 },
-    { id: "EMP005", name: "Kasun Rajapaksa", dept: "Operations Department", allowance: 70000, deduction: 60000, net: 10000 },
-  ];
+  const employeePreview = useMemo(() => {
+    return employees.map((emp) => {
+      const empAllowances = (emp as any).allowances || [];
+      const totalAllowance = allowances
+        .filter((a) => empAllowances.includes(a.name) || empAllowances.includes(String(a.id)))
+        .reduce((sum, curr) => sum + curr.amount, 0);
+
+      const empDeductions = (emp as any).deductions || [];
+      const totalDeduction = deductions
+        .filter((d) => empDeductions.includes(d.name) || empDeductions.includes(String(d.id)))
+        .reduce((sum, curr) => sum + curr.amount, 0);
+
+      return {
+        id: emp.id,
+        name: emp.name,
+        dept: emp.department,
+        allowance: totalAllowance,
+        deduction: totalDeduction,
+        net: totalAllowance - totalDeduction,
+        rawEmployee: emp
+      };
+    });
+  }, [employees, allowances, deductions]);
 
   const paginatedAllowances = useMemo(() => {
     const startIndex = (allowancePage - 1) * itemsPerPage;
@@ -210,8 +334,14 @@ export default function AllowancesDeductionsPage() {
                       <td className="py-3 px-3 text-right font-bold text-slate-700">{item.amount.toLocaleString()}</td>
                       <td className="py-3 px-4 text-center">
                         <div className="flex items-center justify-center gap-1">
-                          <button className="p-1 text-slate-400 hover:text-blue-600 rounded hover:bg-slate-100 transition-colors"><Edit2 className="h-3.5 w-3.5" /></button>
-                          <button className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-slate-100 transition-colors"><Trash2 className="h-3.5 w-3.5" /></button>
+                          <button className="p-1 text-slate-400 hover:text-blue-600 rounded hover:bg-slate-100 transition-colors" title="Edit"><Edit2 className="h-3.5 w-3.5" /></button>
+                          <button 
+                            onClick={() => handleDeleteAllowance(item.id)}
+                            className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-slate-100 transition-colors" 
+                            title="Delete"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -281,8 +411,14 @@ export default function AllowancesDeductionsPage() {
                       <td className="py-3 px-3 text-right font-bold text-slate-700">{item.amount.toLocaleString()}</td>
                       <td className="py-3 px-4 text-center">
                         <div className="flex items-center justify-center gap-1">
-                          <button className="p-1 text-slate-400 hover:text-blue-600 rounded hover:bg-slate-100 transition-colors"><Edit2 className="h-3.5 w-3.5" /></button>
-                          <button className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-slate-100 transition-colors"><Trash2 className="h-3.5 w-3.5" /></button>
+                          <button className="p-1 text-slate-400 hover:text-blue-600 rounded hover:bg-slate-100 transition-colors" title="Edit"><Edit2 className="h-3.5 w-3.5" /></button>
+                          <button 
+                            onClick={() => handleDeleteDeduction(item.id)}
+                            className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-slate-100 transition-colors" 
+                            title="Delete"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -427,6 +563,7 @@ export default function AllowancesDeductionsPage() {
                 <th className="py-2.5 px-4 text-right">Total Allowances</th>
                 <th className="py-2.5 px-4 text-right">Total Deductions</th>
                 <th className="py-2.5 px-4 text-right">Net Impact</th>
+                <th className="py-2.5 px-4 text-center">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
@@ -439,6 +576,14 @@ export default function AllowancesDeductionsPage() {
                   <td className="py-3 px-4 text-right text-rose-600">-LKR {item.deduction.toLocaleString()}</td>
                   <td className={`py-3 px-4 text-right font-bold ${item.net >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
                     LKR {item.net.toLocaleString()}
+                  </td>
+                  <td className="py-3 px-4 text-center">
+                    <button
+                      onClick={() => handleOpenAssign(item.rawEmployee)}
+                      className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 font-bold text-[10px] rounded-lg transition-colors cursor-pointer"
+                    >
+                      Assign
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -626,6 +771,109 @@ export default function AllowancesDeductionsPage() {
             </form>
           </div>
         </div>
+        </Portal>
+      )}
+
+      {/* Assign Allowances & Deductions Modal */}
+      {showAssignModal && selectedEmp && (
+        <Portal>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs">
+            <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl border border-slate-100 flex flex-col max-h-[85vh]">
+              <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-2xl">
+                <h3 className="font-bold text-slate-800 text-sm">
+                  Assign Allowances & Deductions
+                </h3>
+                <span className="text-xs text-blue-600 font-extrabold">{selectedEmp.name} ({selectedEmp.id})</span>
+              </div>
+              <form onSubmit={handleSaveAssignment} className="p-6 overflow-y-auto space-y-5 flex-1">
+                {/* Allowances Section */}
+                <div className="space-y-2.5">
+                  <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Recurring Allowances</h4>
+                  {allowances.length === 0 ? (
+                    <p className="text-xs text-slate-400 font-medium">No allowances defined in settings.</p>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      {allowances.map((item) => {
+                        const isChecked = assignedAllowances.includes(item.name) || assignedAllowances.includes(String(item.id));
+                        return (
+                          <label key={item.id} className="flex items-center gap-2 p-2 bg-slate-50 hover:bg-slate-100 rounded-lg border border-slate-200/50 cursor-pointer transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={(e) => {
+                                const key = item.name;
+                                if (e.target.checked) {
+                                  setAssignedAllowances(prev => [...prev, key]);
+                                } else {
+                                  setAssignedAllowances(prev => prev.filter(v => v !== key));
+                                }
+                              }}
+                              className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4"
+                            />
+                            <div className="flex flex-col">
+                              <span className="font-bold text-slate-700">{item.name}</span>
+                              <span className="text-[9px] text-slate-400">LKR {item.amount.toLocaleString()}</span>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Deductions Section */}
+                <div className="space-y-2.5">
+                  <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Recurring Deductions</h4>
+                  {deductions.length === 0 ? (
+                    <p className="text-xs text-slate-400 font-medium">No deductions defined in settings.</p>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      {deductions.map((item) => {
+                        const isChecked = assignedDeductions.includes(item.name) || assignedDeductions.includes(String(item.id));
+                        return (
+                          <label key={item.id} className="flex items-center gap-2 p-2 bg-slate-50 hover:bg-slate-100 rounded-lg border border-slate-200/50 cursor-pointer transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={(e) => {
+                                const key = item.name;
+                                if (e.target.checked) {
+                                  setAssignedDeductions(prev => [...prev, key]);
+                                } else {
+                                  setAssignedDeductions(prev => prev.filter(v => v !== key));
+                                }
+                              }}
+                              className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4"
+                            />
+                            <div className="flex flex-col">
+                              <span className="font-bold text-slate-700">{item.name}</span>
+                              <span className="text-[9px] text-slate-400">LKR {item.amount.toLocaleString()}</span>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => { setShowAssignModal(false); setSelectedEmp(null); }}
+                    className="px-4 py-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-500 hover:bg-slate-100 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-lg shadow-md shadow-blue-500/10"
+                  >
+                    Save Changes
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
         </Portal>
       )}
     </div>
