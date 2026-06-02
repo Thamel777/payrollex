@@ -25,6 +25,30 @@ export interface Employee {
   address: string;
   email?: string;
   phone?: string;
+  attendanceLogs?: Record<string, {
+    shift: string;
+    inTime: string;
+    outTime: string;
+    status: "Present" | "Late" | "Early Leave" | "Absent" | "Missing Punch";
+    workHours: string;
+    lateMin: number;
+    notes?: string;
+  }>;
+  correctionRequests?: Record<string, {
+    id: string;
+    empId: string;
+    empName: string;
+    department: string;
+    date: string;
+    type: "Missing Punch" | "Late Arrival" | "Early Leave" | "Wrong Shift" | "Other";
+    reason: string;
+    requestedInTime?: string;
+    requestedOutTime?: string;
+    status: "Pending" | "Approved" | "Rejected";
+    requestedAt: string;
+    processedBy?: string;
+    processedAt?: string;
+  }>;
 }
 
 export interface Shift {
@@ -48,6 +72,23 @@ export interface AttendanceRecord {
   workHours: string;
   lateMin?: number;
 }
+
+export interface CorrectionRequest {
+  id: string;
+  empId: string;
+  empName: string;
+  department: string;
+  date: string;
+  type: "Missing Punch" | "Late Arrival" | "Early Leave" | "Wrong Shift" | "Other";
+  reason: string;
+  requestedInTime?: string;
+  requestedOutTime?: string;
+  status: "Pending" | "Approved" | "Rejected";
+  requestedAt: string;
+  processedBy?: string;
+  processedAt?: string;
+}
+
 
 export interface LeaveRequest {
   id: string;

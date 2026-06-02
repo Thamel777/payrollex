@@ -30,8 +30,10 @@ import {
 } from "lucide-react";
 import { mockEmployees, Employee } from "@/lib/mockData";
 import { useAuth } from "@/lib/AuthContext";
-import { db } from "@/lib/firebase";
-import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
+import { db, firebaseConfig } from "@/lib/firebase";
+import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, getDocs } from "firebase/firestore";
+import { initializeApp, deleteApp } from "firebase/app";
+import { getAuth, createUserWithEmailAndPassword, signOut } from "firebase/auth";
 
 interface ParsedImportRecord {
   tempId: string;
@@ -130,6 +132,15 @@ export default function EmployeesPage() {
     });
   };
 
+  const showAlert = (
+    title: string,
+    message: string,
+    type: "warning" | "info" | "danger" = "info",
+    onConfirm: () => void | Promise<void> = () => {}
+  ) => {
+    showConfirm(title, message, onConfirm, type, "OK", "");
+  };
+
   // Role Gating
   const canAddEdit = role === "Admin" || role === "HR Manager";
   const canDelete = role === "Admin" || role === "HR Manager";
@@ -147,6 +158,125 @@ export default function EmployeesPage() {
       return true;
     }
     return false;
+  };
+
+  // Helper to create Firebase Auth user and Firestore user profile without logging out admin
+  const createAuthAndProfileForEmployee = async (empId: string, email: string, name: string) => {
+    const appName = `SecondaryApp_${empId}_${Date.now()}`;
+    let tempApp;
+    try {
+      tempApp = initializeApp(firebaseConfig, appName);
+      const tempAuth = getAuth(tempApp);
+      const credential = await createUserWithEmailAndPassword(tempAuth, email, "Temp@123");
+      const uid = credential.user.uid;
+      await signOut(tempAuth);
+
+      // Determine role based on email conventions
+      let empRole = "Employee";
+      const lowerEmail = email.toLowerCase();
+      if (lowerEmail.startsWith("admin")) empRole = "Admin";
+      else if (lowerEmail.startsWith("hr")) empRole = "HR Manager";
+      else if (lowerEmail.startsWith("accounts")) empRole = "Accounts Officer";
+      else if (lowerEmail.startsWith("dm")) empRole = "Department Manager";
+      else if (lowerEmail.startsWith("employee")) empRole = "Employee";
+      else if (lowerEmail.startsWith("management")) empRole = "Management";
+
+      await setDoc(doc(db, "users", uid), {
+        uid,
+        email,
+        role: empRole,
+        employeeId: empId,
+        name,
+        createdAt: new Date().toISOString()
+      });
+      return true;
+    } catch (error: any) {
+      console.error(`Failed to create Auth account for ${empId}:`, error);
+      throw error;
+    } finally {
+      if (tempApp) {
+        await deleteApp(tempApp);
+      }
+    }
+  };
+
+  // Sync / create Auth profiles for all existing employees who do not have one
+  const handleSyncAuthProfiles = async () => {
+    setLoading(true);
+    try {
+      const usersSnap = await getDocs(collection(db, "users"));
+      const existingUserEmails = new Set<string>();
+      const existingUserEmployeeIds = new Set<string>();
+      
+      usersSnap.forEach(docSnap => {
+        const data = docSnap.data();
+        if (data.email) existingUserEmails.add(data.email.toLowerCase());
+        if (data.employeeId) existingUserEmployeeIds.add(data.employeeId);
+      });
+
+      // Find employees who do not have a user profile
+      const missingEmployees = employees.filter(emp => {
+        const empEmail = emp.email || `${emp.id.toLowerCase()}@kawdoco.com`;
+        const hasEmailUser = existingUserEmails.has(empEmail.toLowerCase());
+        const hasEmpIdUser = existingUserEmployeeIds.has(emp.id);
+        return !hasEmailUser && !hasEmpIdUser;
+      });
+
+      if (missingEmployees.length === 0) {
+        setLoading(false);
+        showConfirm(
+          "Profiles Up to Date",
+          "All existing employees already have associated user accounts and profiles. No new actions needed.",
+          () => {},
+          "info",
+          "OK",
+          ""
+        );
+        return;
+      }
+
+      const syncAction = async () => {
+        setLoading(true);
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const emp of missingEmployees) {
+          const email = emp.email || `${emp.id.toLowerCase()}@kawdoco.com`;
+          try {
+            await createAuthAndProfileForEmployee(emp.id, email, emp.name);
+            successCount++;
+          } catch (e) {
+            console.error(`Sync failed for ${emp.name}:`, e);
+            failCount++;
+          }
+        }
+
+        setLoading(false);
+        showConfirm(
+          "Sync Completed",
+          `Successfully created user accounts & profiles for ${successCount} employees with default password "Temp@123". ${
+            failCount > 0 ? `Failed to create for ${failCount} employees (check console for errors).` : ""
+          }`,
+          () => {},
+          "info",
+          "Close",
+          ""
+        );
+      };
+
+      setLoading(false);
+      showConfirm(
+        "Create Missing User Profiles",
+        `We found ${missingEmployees.length} employee(s) without active user accounts or profiles. Do you want to automatically register their accounts with email login and password "Temp@123"?`,
+        syncAction,
+        "warning",
+        "Create Profiles"
+      );
+    } catch (err: any) {
+      console.error("Failed to sync users:", err);
+      setLoading(false);
+      showAlert("Sync Error", "Failed to sync accounts: " + err.message, "danger");
+    }
   };
 
   // Sync / load employees from Firestore (and seed if empty)
@@ -219,13 +349,13 @@ export default function EmployeesPage() {
 
     // Validate file type
     if (!file.type.startsWith("image/")) {
-      alert("Please select a valid image file (JPG, PNG, WEBP)");
+      showAlert("Invalid Image", "Please select a valid image file (JPG, PNG, WEBP)", "warning");
       return;
     }
 
     // Validate file size (max 5MB)
     if (file.size > 5 * 1024 * 1024) {
-      alert("Image file size must be under 5MB");
+      showAlert("File Too Large", "Image file size must be under 5MB", "warning");
       return;
     }
 
@@ -337,7 +467,7 @@ export default function EmployeesPage() {
     const name = formEmp.name;
     const designation = formEmp.designation;
     if (!name || !designation) {
-      alert("Please fill out name and designation");
+      showAlert("Validation Error", "Please fill out name and designation", "warning");
       return;
     }
 
@@ -385,6 +515,24 @@ export default function EmployeesPage() {
 
           await setDoc(doc(db, "employees", newId), freshEmployee);
           setSelectedEmp(freshEmployee);
+
+          // Automatically create Firebase Auth user account & Firestore profile
+          const email = freshEmployee.email || `${newId.toLowerCase()}@kawdoco.com`;
+          try {
+            await createAuthAndProfileForEmployee(newId, email, name);
+            showAlert(
+              "Profile & Account Created",
+              `Successfully created employee profile and registered login account for "${name}" with temporary password "Temp@123".`,
+              "info"
+            );
+          } catch (authErr: any) {
+            console.error("Failed to auto-create Auth account on registration:", authErr);
+            showAlert(
+              "Profile Created with Auth Warning",
+              `Employee profile created successfully, but we failed to auto-register their login account: ${authErr.message || authErr}. You can try syncing their account later using the Sync profiles tool.`,
+              "warning"
+            );
+          }
         } else {
           const id = formEmp.id!;
 
@@ -416,9 +564,9 @@ export default function EmployeesPage() {
         setPhotoFile(null);
         setPhotoPreview(null);
         setShowModal(false);
-      } catch (err) {
+      } catch (err: any) {
         console.error("Error saving employee record:", err);
-        alert("Error saving record: " + (err as Error).message);
+        showAlert("Save Error", "Error saving record: " + err.message, "danger");
       }
     };
 
@@ -440,9 +588,9 @@ export default function EmployeesPage() {
         if (selectedEmp?.id === id) {
           setSelectedEmp(null);
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error("Error deleting employee:", err);
-        alert("Failed to delete record: " + (err as Error).message);
+        showAlert("Delete Error", "Failed to delete record: " + err.message, "danger");
       }
     };
 
@@ -697,7 +845,7 @@ export default function EmployeesPage() {
     const invalidRowsCount = importPreviewData.length - validRows.length;
 
     if (validRows.length === 0) {
-      alert("No valid employee records to import.");
+      showAlert("Import Error", "No valid employee records to import.", "warning");
       return;
     }
 
@@ -706,6 +854,9 @@ export default function EmployeesPage() {
       setImportError(null);
 
       try {
+        let authSuccessCount = 0;
+        let authFailCount = 0;
+
         // Save rows sequentially
         for (const row of validRows) {
           const id = row.data.id!;
@@ -714,14 +865,30 @@ export default function EmployeesPage() {
           delete payload.id;
           
           await setDoc(doc(db, "employees", id), payload);
+
+          // Automatically create Auth user account
+          const email = payload.email || `${id.toLowerCase()}@kawdoco.com`;
+          try {
+            await createAuthAndProfileForEmployee(id, email, payload.name || "");
+            authSuccessCount++;
+          } catch (e) {
+            console.error(`Failed to automatically create Auth account for ${payload.name} during import:`, e);
+            authFailCount++;
+          }
         }
 
-        alert(`Successfully registered ${validRows.length} employee profiles!`);
+        showAlert(
+          "Import Completed",
+          `Successfully registered ${validRows.length} employee profiles! Created login accounts for ${authSuccessCount} employees. ${
+            authFailCount > 0 ? `Failed to create login accounts for ${authFailCount} employees (they can be synced later).` : ""
+          }`,
+          "info"
+        );
         setShowImportModal(false);
         setImportPreviewData([]);
-      } catch (err) {
+      } catch (err: any) {
         console.error("Bulk write failed:", err);
-        setImportError("Failed to write data: " + (err as Error).message);
+        setImportError("Failed to write data: " + err.message);
       } finally {
         setImporting(false);
       }
@@ -834,6 +1001,15 @@ export default function EmployeesPage() {
               className="px-3.5 py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 hover:text-slate-800 hover:bg-slate-50 flex items-center gap-1.5 transition-colors cursor-pointer bg-white"
             >
               <FileSpreadsheet className="h-4 w-4 text-emerald-600" /> Import
+            </button>
+          )}
+          {canAddEdit && (
+            <button
+              onClick={handleSyncAuthProfiles}
+              className="px-3.5 py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 hover:text-slate-800 hover:bg-slate-50 flex items-center gap-1.5 transition-colors cursor-pointer bg-white"
+              title="Create missing Auth profiles for existing employees"
+            >
+              <RefreshCw className="h-4 w-4 text-blue-600" /> Sync Auth Profiles
             </button>
           )}
           {canAddEdit && (
@@ -1912,13 +2088,15 @@ export default function EmployeesPage() {
             </div>
 
             <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
-                className="px-4 py-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
-              >
-                {confirmModal.cancelText}
-              </button>
+              {confirmModal.cancelText && (
+                <button
+                  type="button"
+                  onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+                  className="px-4 py-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  {confirmModal.cancelText}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={confirmModal.onConfirm}

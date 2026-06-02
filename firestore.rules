@@ -1,0 +1,74 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Existing users rule (updated to support Admin/HR listing for Sync)
+    match /users/{userId} {
+      // Helper function to check if the current user has Admin or HR Manager role
+      function isAdminOrHR() {
+        return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['Admin', 'HR Manager'];
+      }
+
+      // Users can get/write their own user profile document; Admins & HR Managers can access any profile document
+      allow get: if request.auth != null && (request.auth.uid == userId || isAdminOrHR());
+      allow write: if request.auth != null && (request.auth.uid == userId || isAdminOrHR());
+      
+      // Only Admins and HR Managers can list all profiles (needed for the synchronization process)
+      allow list: if request.auth != null && isAdminOrHR();
+    }
+    
+    // Existing permissions matrix rule
+    match /users/permissions_matrix {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "Admin";
+    }
+
+    // Employees Rules
+    match /employees/{employeeId} {
+      // Helper function to get current user's role from their user document
+      function getUserRole() {
+        return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+      }
+      
+      // Helper function to get current user's employeeId
+      function getUserEmployeeId() {
+        return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.employeeId;
+      }
+
+      // Helper function to check if only correctionRequests and/or attendanceLogs are modified
+      function onlyModifiesAttendanceOrCorrections() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['attendanceLogs', 'correctionRequests']);
+      }
+
+      // Helper function to check if only correctionRequests is modified
+      function onlyModifiesCorrections() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['correctionRequests']);
+      }
+
+      // Read rules: Allowed for Admin, HR Manager, Accounts Officer, Management,
+      // or if the employee is viewing their own profile.
+      allow read: if request.auth != null && (
+        getUserRole() in ['Admin', 'HR Manager', 'Accounts Officer', 'Management'] || 
+        getUserEmployeeId() == employeeId
+      );
+
+      // Write rules: 
+      // 1. Admins and HR Managers can perform any create/update/delete operations.
+      // 2. Department Managers can update employee records but only to edit attendance logs or correction requests.
+      // 3. Employees can update their own records but only to submit/edit correction requests.
+      allow create: if request.auth != null && (
+        getUserRole() in ['Admin', 'HR Manager']
+      );
+
+      allow update: if request.auth != null && (
+        getUserRole() in ['Admin', 'HR Manager'] ||
+        (getUserRole() == 'Department Manager' && onlyModifiesAttendanceOrCorrections()) ||
+        (getUserEmployeeId() == employeeId && onlyModifiesCorrections())
+      );
+
+      allow delete: if request.auth != null && (
+        getUserRole() in ['Admin', 'HR Manager']
+      );
+    }
+  }
+}
