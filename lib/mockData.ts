@@ -49,6 +49,16 @@ export interface Employee {
     processedBy?: string;
     processedAt?: string;
   }>;
+  roster?: Record<string, string>;
+  leaveBalances?: {
+    annual: number;
+    casual: number;
+    medical: number;
+    special: number;
+    [key: string]: number;
+  };
+  leaveRequests?: Record<string, LeaveRequest>;
+  overtimeRequests?: Record<string, OvertimeRequest>;
 }
 
 export interface Shift {

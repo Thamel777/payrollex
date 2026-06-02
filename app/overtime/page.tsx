@@ -4,16 +4,19 @@ import { useState, useMemo, useEffect } from "react";
 import {
   Hourglass,
   CheckCircle,
+  CheckCircle2,
   XCircle,
   Plus,
   Search,
   Download,
   AlertCircle,
+  AlertTriangle,
   TrendingUp,
   FileCheck2,
   DollarSign,
   Settings,
-  Edit
+  Edit,
+  Users
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -28,14 +31,19 @@ import {
   Tooltip,
   Legend
 } from "recharts";
-import { mockOvertimeRequests, OvertimeRequest } from "@/lib/mockData";
+import { mockOvertimeRequests, OvertimeRequest, Employee } from "@/lib/mockData";
+import { db } from "@/lib/firebase";
+import { doc, updateDoc, collection, onSnapshot } from "firebase/firestore";
+import { useAuth } from "@/lib/AuthContext";
 
 export default function OvertimePage() {
+  const { employeeId } = useAuth();
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [dbLoading, setDbLoading] = useState(true);
   const [mounted, setMounted] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [typeFilter, setTypeFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("All");
-  const [requests, setRequests] = useState<OvertimeRequest[]>(mockOvertimeRequests);
   const [showAddModal, setShowAddModal] = useState(false);
 
   // Form states
@@ -46,17 +54,212 @@ export default function OvertimePage() {
   const [formHours, setFormHours] = useState(3);
   const [formRateType, setFormRateType] = useState("Hourly Rate");
 
+  // Custom Confirmation Modal State
+  const [confirmModal, setConfirmModal] = useState<{
+    show: boolean;
+    title: string;
+    message: string;
+    confirmText: string;
+    cancelText: string;
+    onConfirm: () => void | Promise<void>;
+    type: "warning" | "info" | "danger" | "success";
+    position?: { top: number; left: number };
+  }>({
+    show: false,
+    title: "",
+    message: "",
+    confirmText: "Confirm",
+    cancelText: "Cancel",
+    onConfirm: () => {},
+    type: "info"
+  });
+
+  // Load employees from Firestore
   useEffect(() => {
     setMounted(true);
+
+    const unsub = onSnapshot(collection(db, "employees"), (snapshot) => {
+      const list: Employee[] = [];
+      snapshot.forEach(docSnap => {
+        list.push({ id: docSnap.id, ...docSnap.data() } as Employee);
+      });
+      setEmployees(list);
+      setDbLoading(false);
+    });
+
+    return () => unsub();
   }, []);
 
-  const handleAddRequest = (e: React.FormEvent) => {
+  // Seeding default overtime requests if not present in Firestore
+  useEffect(() => {
+    if (employees.length > 0) {
+      const seedDefaultOvertime = async () => {
+        for (const emp of employees) {
+          if (!emp.overtimeRequests) {
+            const empMockOvertime: Record<string, any> = {};
+            mockOvertimeRequests.forEach(req => {
+              if (req.name === emp.name) {
+                empMockOvertime[req.id] = req;
+              }
+            });
+            try {
+              await updateDoc(doc(db, "employees", emp.id), {
+                overtimeRequests: empMockOvertime
+              });
+            } catch (err) {
+              console.error("Failed to seed overtime data for " + emp.name, err);
+            }
+          }
+        }
+      };
+      seedDefaultOvertime();
+    }
+  }, [employees]);
+
+  // Determine active applying employee info based on form selection
+  const selectedEmployeeDoc = useMemo(() => {
+    return employees.find(e => e.name === formName) || (employees.length > 0 ? employees[0] : null);
+  }, [employees, formName]);
+
+  const showConfirm = (
+    title: string,
+    message: string,
+    onConfirm: () => void | Promise<void>,
+    type: "warning" | "info" | "danger" | "success" = "info",
+    confirmText: string = "Confirm",
+    cancelText: string = "Cancel",
+    event?: any
+  ) => {
+    let position = undefined;
+    if (event && event.currentTarget) {
+      try {
+        const rect = event.currentTarget.getBoundingClientRect();
+        const buttonWidth = rect.width;
+        const modalWidth = 320;
+        
+        let left = rect.left + buttonWidth / 2 - modalWidth / 2;
+        let top = rect.bottom + 8;
+        
+        if (left < 16) left = 16;
+        if (left + modalWidth > window.innerWidth - 16) {
+          left = window.innerWidth - modalWidth - 16;
+        }
+        
+        const modalHeight = 180;
+        if (top + modalHeight > window.innerHeight - 16) {
+          top = rect.top - modalHeight - 8;
+        }
+        if (top < 16) top = rect.bottom + 8;
+        
+        position = { top, left };
+      } catch (err) {
+        console.error("Failed to calculate popup position:", err);
+      }
+    }
+
+    setConfirmModal({
+      show: true,
+      title,
+      message,
+      confirmText,
+      cancelText,
+      onConfirm: async () => {
+        await onConfirm();
+        setConfirmModal(prev => ({ ...prev, show: false }));
+      },
+      type,
+      position
+    });
+  };
+
+  const showAlert = (
+    title: string,
+    message: string,
+    type: "warning" | "info" | "danger" | "success" = "info",
+    event?: any
+  ) => {
+    let position = undefined;
+    if (event && event.currentTarget) {
+      try {
+        let targetElement = event.currentTarget;
+        if (targetElement.tagName === "FORM") {
+          const submitBtn = targetElement.querySelector('button[type="submit"]') || targetElement.querySelector('button');
+          if (submitBtn) {
+            targetElement = submitBtn;
+          }
+        }
+        const rect = targetElement.getBoundingClientRect();
+        const buttonWidth = rect.width;
+        const modalWidth = 320;
+        
+        let left = rect.left + buttonWidth / 2 - modalWidth / 2;
+        let top = rect.bottom + 8;
+        
+        if (left < 16) left = 16;
+        if (left + modalWidth > window.innerWidth - 16) {
+          left = window.innerWidth - modalWidth - 16;
+        }
+        
+        const modalHeight = 150;
+        if (top + modalHeight > window.innerHeight - 16) {
+          top = rect.top - modalHeight - 8;
+        }
+        if (top < 16) top = rect.bottom + 8;
+        
+        position = { top, left };
+      } catch {
+        // Fallback to center
+      }
+    }
+
+    setConfirmModal({
+      show: true,
+      title,
+      message,
+      confirmText: "OK",
+      cancelText: "",
+      onConfirm: () => {
+        setConfirmModal(prev => ({ ...prev, show: false }));
+      },
+      type,
+      position
+    });
+  };
+
+  // Compile flat overtime requests list
+  const requests = useMemo(() => {
+    const list: (OvertimeRequest & { empId: string })[] = [];
+    employees.forEach(emp => {
+      if (emp.overtimeRequests) {
+        Object.values(emp.overtimeRequests).forEach((req: any) => {
+          list.push({
+            ...req,
+            empId: emp.id,
+            name: emp.name, // Ensure we have the name
+            department: emp.department // Ensure we have the department
+          });
+        });
+      }
+    });
+
+    if (list.length === 0 && dbLoading) {
+      return mockOvertimeRequests.map(r => ({ ...r, empId: "EMP001" }));
+    }
+
+    // Sort desc by date
+    return list.sort((a, b) => b.id.localeCompare(a.id));
+  }, [employees, dbLoading]);
+
+  const handleAddRequest = async (e: React.FormEvent) => {
     e.preventDefault();
     const rateAmount = formType === "Normal OT" ? 1200 : formType === "Weekend OT" ? 1500 : formType === "Night OT" ? 1800 : 2000;
     const amount = formHours * rateAmount;
 
+    const totalRequestsCount = employees.reduce((acc, emp) => acc + (emp.overtimeRequests ? Object.keys(emp.overtimeRequests).length : 0), 0);
+    const newId = `OT00${totalRequestsCount + 1}`;
+
     const freshRequest: OvertimeRequest = {
-      id: `OT00${requests.length + 1}`,
+      id: newId,
       name: formName,
       department: formDept,
       type: formType,
@@ -68,13 +271,40 @@ export default function OvertimePage() {
       status: "Pending"
     };
 
-    setRequests(prev => [freshRequest, ...prev]);
-    setShowAddModal(false);
+    const targetEmpId = selectedEmployeeDoc?.id || "EMP001";
+
+    try {
+      await updateDoc(doc(db, "employees", targetEmpId), {
+        [`overtimeRequests.${newId}`]: freshRequest
+      });
+      setShowAddModal(false);
+      showAlert("Success", "Overtime request submitted successfully!", "success", e);
+    } catch (err: any) {
+      showAlert("Error", "Failed to submit overtime request: " + err.message, "danger", e);
+    }
   };
 
-  const handleAction = (id: string, action: "Approved" | "Rejected") => {
-    setRequests(prev =>
-      prev.map(r => (r.id === id ? { ...r, status: action } : r))
+  const handleAction = async (empId: string, requestId: string, action: "Approved" | "Rejected") => {
+    try {
+      await updateDoc(doc(db, "employees", empId), {
+        [`overtimeRequests.${requestId}.status`]: action,
+        [`overtimeRequests.${requestId}.processedBy`]: employeeId || "Admin",
+        [`overtimeRequests.${requestId}.processedAt`]: new Date().toISOString().split("T")[0]
+      });
+    } catch (err: any) {
+      console.error("Error updating OT action:", err);
+    }
+  };
+
+  const handleActionConfirm = (empId: string, requestId: string, action: "Approved" | "Rejected", event: React.MouseEvent) => {
+    showConfirm(
+      `Confirm Overtime ${action === "Approved" ? "Approval" : "Rejection"}`,
+      `Are you sure you want to ${action.toLowerCase()} this overtime request?`,
+      () => handleAction(empId, requestId, action),
+      action === "Approved" ? "success" : "danger",
+      action === "Approved" ? "Approve" : "Reject",
+      "Cancel",
+      event
     );
   };
 
@@ -116,13 +346,22 @@ export default function OvertimePage() {
   }, [requests, searchTerm, typeFilter, statusFilter]);
 
   // Chart data
-  const typeData = [
-    { name: "Normal OT", value: 102, color: "#3b82f6" },
-    { name: "Weekend OT", value: 60, color: "#10b981" },
-    { name: "Night OT", value: 45, color: "#8b5cf6" },
-    { name: "Holiday OT", value: 34, color: "#f59e0b" },
-    { name: "Other", value: 15, color: "#64748b" },
-  ];
+  const typeData = useMemo(() => {
+    const counts = { "Normal OT": 0, "Weekend OT": 0, "Night OT": 0, "Holiday OT": 0, "Other": 0 };
+    requests.forEach(r => {
+      if (r.status === "Approved") {
+        if (r.type in counts) counts[r.type as keyof typeof counts] += r.hours;
+        else counts["Other"] += r.hours;
+      }
+    });
+    return [
+      { name: "Normal OT", value: counts["Normal OT"] || 102, color: "#3b82f6" },
+      { name: "Weekend OT", value: counts["Weekend OT"] || 60, color: "#10b981" },
+      { name: "Night OT", value: counts["Night OT"] || 45, color: "#8b5cf6" },
+      { name: "Holiday OT", value: counts["Holiday OT"] || 34, color: "#f59e0b" },
+      { name: "Other", value: counts["Other"] || 15, color: "#64748b" },
+    ];
+  }, [requests]);
 
   const trendData = [
     { date: "May 01", Hours: 24 },
@@ -276,13 +515,13 @@ export default function OvertimePage() {
                           {req.status === "Pending" ? (
                             <div className="flex items-center justify-center gap-1.5">
                               <button
-                                onClick={() => handleAction(req.id, "Approved")}
+                                onClick={(e) => handleActionConfirm(req.empId, req.id, "Approved", e)}
                                 className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[10px] rounded-md transition-all cursor-pointer"
                               >
                                 Approve
                               </button>
                               <button
-                                onClick={() => handleAction(req.id, "Rejected")}
+                                onClick={(e) => handleActionConfirm(req.empId, req.id, "Rejected", e)}
                                 className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-semibold text-[10px] rounded-md transition-all cursor-pointer"
                               >
                                 Reject
@@ -540,6 +779,97 @@ export default function OvertimePage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Confirmation Modal (positioned context-sensitively next to clicked action button) */}
+      {confirmModal.show && (
+        <div 
+          className="fixed inset-0 z-[100] bg-black/15 backdrop-blur-[1px] select-none p-4 animate-fade-in-fast"
+          onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+        >
+          <div 
+            className="absolute bg-white rounded-2xl w-full max-w-[320px] shadow-2xl border border-slate-100 p-5 space-y-4 z-[101] animate-pop-in"
+            style={confirmModal.position ? {
+              position: 'fixed',
+              top: confirmModal.position.top,
+              left: confirmModal.position.left
+            } : {
+              position: 'fixed',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              maxWidth: '380px'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3.5">
+              <div className={`p-2.5 rounded-full shrink-0 ${
+                confirmModal.type === "danger" 
+                  ? "bg-rose-50 text-rose-600 border border-rose-100" 
+                  : confirmModal.type === "warning"
+                  ? "bg-amber-50 text-amber-600 border border-amber-100"
+                  : confirmModal.type === "success"
+                  ? "bg-emerald-50 text-emerald-600 border border-emerald-100"
+                  : "bg-blue-50 text-blue-600 border border-blue-100"
+              }`}>
+                {confirmModal.type === "danger" ? (
+                  <XCircle className="h-5 w-5" />
+                ) : confirmModal.type === "warning" ? (
+                  <AlertTriangle className="h-5 w-5" />
+                ) : confirmModal.type === "success" ? (
+                  <CheckCircle className="h-5 w-5" />
+                ) : (
+                  <Users className="h-5 w-5" />
+                )}
+              </div>
+              <div className="space-y-0.5">
+                <h3 className="font-bold text-slate-800 text-xs leading-normal">
+                  {confirmModal.title}
+                </h3>
+                <p className="text-[10px] text-slate-500 font-semibold leading-relaxed">
+                  {confirmModal.message}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              {confirmModal.cancelText && (
+                <button
+                  type="button"
+                  onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+                  className="px-3.5 py-1.5 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition-colors cursor-pointer bg-white"
+                >
+                  {confirmModal.cancelText}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={confirmModal.onConfirm}
+                className={`px-3.5 py-1.5 text-white font-bold text-[10px] rounded-lg transition-all shadow-md cursor-pointer ${
+                  confirmModal.type === "danger"
+                    ? "bg-rose-600 hover:bg-rose-700 shadow-rose-500/10"
+                    : confirmModal.type === "warning"
+                    ? "bg-amber-600 hover:bg-amber-700 shadow-amber-500/10"
+                    : confirmModal.type === "success"
+                    ? "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-500/10"
+                    : "bg-blue-600 hover:bg-blue-700 shadow-blue-500/10"
+                }`}
+              >
+                {confirmModal.confirmText}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Loading Overlay */}
+      {dbLoading && (
+        <div className="fixed inset-0 bg-slate-900/10 backdrop-blur-xs flex items-center justify-center z-[200]">
+          <div className="bg-white px-5 py-3.5 rounded-2xl shadow-xl border border-slate-100 flex items-center gap-3">
+            <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+            <span className="text-xs font-bold text-slate-600">Connecting to Firestore...</span>
           </div>
         </div>
       )}

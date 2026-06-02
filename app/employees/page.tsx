@@ -120,10 +120,17 @@ export default function EmployeesPage() {
     cancelText: string = "Cancel",
     event?: any
   ) => {
-    let position = undefined;
+    let position: { top: number; left: number } | undefined = undefined;
     if (event && event.currentTarget) {
       try {
-        const rect = event.currentTarget.getBoundingClientRect();
+        let targetElement = event.currentTarget;
+        if (targetElement.tagName === "FORM") {
+          const submitBtn = targetElement.querySelector('button[type="submit"]') || targetElement.querySelector('button');
+          if (submitBtn) {
+            targetElement = submitBtn;
+          }
+        }
+        const rect = targetElement.getBoundingClientRect();
         const buttonWidth = rect.width;
         const modalWidth = 320;
         
@@ -141,7 +148,7 @@ export default function EmployeesPage() {
         }
         if (top < 16) top = rect.bottom + 8;
         
-        position = { top: top + window.scrollY, left: left + window.scrollX };
+        position = { top, left };
       } catch (err) {
         console.error("Failed to calculate popup position:", err);
       }
@@ -2093,12 +2100,13 @@ export default function EmployeesPage() {
       {/* Custom Confirmation Modal */}
       {confirmModal.show && (
         <div 
-          className="fixed inset-0 z-[100] bg-black/15 backdrop-blur-[1px] select-none p-4 animate-fade-in"
+          className="fixed inset-0 z-[100] bg-black/15 backdrop-blur-[1px] select-none p-4 animate-fade-in-fast"
           onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
         >
           <div 
-            className="absolute bg-white rounded-2xl w-full max-w-[320px] shadow-2xl border border-slate-100 p-5 space-y-4 z-[101]"
+            className="absolute bg-white rounded-2xl w-full max-w-[320px] shadow-2xl border border-slate-100 p-5 space-y-4 z-[101] animate-pop-in"
             style={confirmModal.position ? {
+              position: 'fixed',
               top: confirmModal.position.top,
               left: confirmModal.position.left
             } : {

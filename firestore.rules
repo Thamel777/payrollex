@@ -23,6 +23,24 @@ service cloud.firestore {
       allow write: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "Admin";
     }
 
+    // Shifts Rules
+    match /shifts/{shiftId} {
+      function getUserRole() {
+        return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+      }
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && getUserRole() in ['Admin', 'HR Manager'];
+    }
+
+    // Settings Rules
+    match /settings/{settingId} {
+      function getUserRole() {
+        return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+      }
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && getUserRole() in ['Admin', 'HR Manager'];
+    }
+
     // Employees Rules
     match /employees/{employeeId} {
       // Helper function to get current user's role from their user document
@@ -35,14 +53,18 @@ service cloud.firestore {
         return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.employeeId;
       }
 
-      // Helper function to check if only correctionRequests and/or attendanceLogs are modified
-      function onlyModifiesAttendanceOrCorrections() {
-        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['attendanceLogs', 'correctionRequests']);
+      // Helper function to check fields modified by Department Manager (roster, attendance, corrections, leaves, overtimes)
+      function isManagerModification() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'attendanceLogs', 'correctionRequests', 'roster', 'leaveRequests', 'leaveBalances', 'overtimeRequests'
+        ]);
       }
 
-      // Helper function to check if only correctionRequests is modified
-      function onlyModifiesCorrections() {
-        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['correctionRequests']);
+      // Helper function to check fields modified by Employee themselves (corrections, leaves, overtimes)
+      function isEmployeeModification() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'correctionRequests', 'leaveRequests', 'overtimeRequests'
+        ]);
       }
 
       // Read rules: Allowed for Admin, HR Manager, Accounts Officer, Management,
@@ -54,16 +76,16 @@ service cloud.firestore {
 
       // Write rules: 
       // 1. Admins and HR Managers can perform any create/update/delete operations.
-      // 2. Department Managers can update employee records but only to edit attendance logs or correction requests.
-      // 3. Employees can update their own records but only to submit/edit correction requests.
+      // 2. Department Managers can update employee records but only to edit roster, attendance, corrections, leaves, and overtimes.
+      // 3. Employees can update their own records but only to submit/edit corrections, leaves, and overtimes.
       allow create: if request.auth != null && (
         getUserRole() in ['Admin', 'HR Manager']
       );
 
       allow update: if request.auth != null && (
         getUserRole() in ['Admin', 'HR Manager'] ||
-        (getUserRole() == 'Department Manager' && onlyModifiesAttendanceOrCorrections()) ||
-        (getUserEmployeeId() == employeeId && onlyModifiesCorrections())
+        (getUserRole() == 'Department Manager' && isManagerModification()) ||
+        (getUserEmployeeId() == employeeId && isEmployeeModification())
       );
 
       allow delete: if request.auth != null && (

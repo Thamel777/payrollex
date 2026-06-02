@@ -4,25 +4,33 @@ import { useState, useMemo, useEffect } from "react";
 import {
   Calendar,
   CheckCircle,
+  CheckCircle2,
   XCircle,
   FileCheck2,
   Plus,
   Search,
   Download,
   AlertCircle,
+  AlertTriangle,
   FileText,
   BookmarkCheck,
   Send,
-  Trash2
+  Trash2,
+  Users
 } from "lucide-react";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
-import { mockLeaveRequests, LeaveRequest } from "@/lib/mockData";
+import { mockLeaveRequests, LeaveRequest, Employee } from "@/lib/mockData";
+import { db } from "@/lib/firebase";
+import { doc, updateDoc, collection, onSnapshot } from "firebase/firestore";
+import { useAuth } from "@/lib/AuthContext";
 
 export default function LeavePage() {
+  const { employeeId } = useAuth();
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [dbLoading, setDbLoading] = useState(true);
   const [mounted, setMounted] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
-  const [requests, setRequests] = useState<LeaveRequest[]>(mockLeaveRequests);
 
   // Form states
   const [formLeaveType, setFormLeaveType] = useState("Annual Leave");
@@ -32,35 +40,282 @@ export default function LeavePage() {
   const [formHalfDay, setFormHalfDay] = useState("Full Day");
   const [formReason, setFormReason] = useState("");
 
+  // Custom Confirmation Modal State
+  const [confirmModal, setConfirmModal] = useState<{
+    show: boolean;
+    title: string;
+    message: string;
+    confirmText: string;
+    cancelText: string;
+    onConfirm: () => void | Promise<void>;
+    type: "warning" | "info" | "danger" | "success";
+    position?: { top: number; left: number };
+  }>({
+    show: false,
+    title: "",
+    message: "",
+    confirmText: "Confirm",
+    cancelText: "Cancel",
+    onConfirm: () => {},
+    type: "info"
+  });
+
+  // Load employees from Firestore
   useEffect(() => {
     setMounted(true);
+
+    const unsub = onSnapshot(collection(db, "employees"), (snapshot) => {
+      const list: Employee[] = [];
+      snapshot.forEach(docSnap => {
+        list.push({ id: docSnap.id, ...docSnap.data() } as Employee);
+      });
+      setEmployees(list);
+      setDbLoading(false);
+    });
+
+    return () => unsub();
   }, []);
 
-  const handleApplyLeave = (e: React.FormEvent) => {
+  // Seeding default leaves and balances if not present in Firestore
+  useEffect(() => {
+    if (employees.length > 0) {
+      const seedDefaultLeaves = async () => {
+        for (const emp of employees) {
+          if (!emp.leaveBalances || !emp.leaveRequests) {
+            const initialBalances = {
+              annual: 14.0,
+              casual: 7.0,
+              medical: 14.0,
+              special: 5.0
+            };
+            const empMockLeaves: Record<string, any> = {};
+            mockLeaveRequests.forEach(req => {
+              if (req.empName === emp.name) {
+                empMockLeaves[req.id] = req;
+              }
+            });
+            try {
+              await updateDoc(doc(db, "employees", emp.id), {
+                leaveBalances: emp.leaveBalances || initialBalances,
+                leaveRequests: emp.leaveRequests || empMockLeaves
+              });
+            } catch (err) {
+              console.error("Failed to seed leave data for " + emp.name, err);
+            }
+          }
+        }
+      };
+      seedDefaultLeaves();
+    }
+  }, [employees]);
+
+  // Determine active applying employee
+  const activeEmpId = employeeId || (employees.length > 0 ? employees[0].id : "EMP001");
+  const activeEmpName = (employees.find(e => e.id === activeEmpId)?.name) || "Admin User";
+  const activeEmpDept = (employees.find(e => e.id === activeEmpId)?.department) || "Management";
+
+  const showConfirm = (
+    title: string,
+    message: string,
+    onConfirm: () => void | Promise<void>,
+    type: "warning" | "info" | "danger" | "success" = "info",
+    confirmText: string = "Confirm",
+    cancelText: string = "Cancel",
+    event?: any
+  ) => {
+    let position = undefined;
+    if (event && event.currentTarget) {
+      try {
+        const rect = event.currentTarget.getBoundingClientRect();
+        const buttonWidth = rect.width;
+        const modalWidth = 320;
+        
+        let left = rect.left + buttonWidth / 2 - modalWidth / 2;
+        let top = rect.bottom + 8;
+        
+        if (left < 16) left = 16;
+        if (left + modalWidth > window.innerWidth - 16) {
+          left = window.innerWidth - modalWidth - 16;
+        }
+        
+        const modalHeight = 180;
+        if (top + modalHeight > window.innerHeight - 16) {
+          top = rect.top - modalHeight - 8;
+        }
+        if (top < 16) top = rect.bottom + 8;
+        
+        position = { top, left };
+      } catch (err) {
+        console.error("Failed to calculate popup position:", err);
+      }
+    }
+
+    setConfirmModal({
+      show: true,
+      title,
+      message,
+      confirmText,
+      cancelText,
+      onConfirm: async () => {
+        await onConfirm();
+        setConfirmModal(prev => ({ ...prev, show: false }));
+      },
+      type,
+      position
+    });
+  };
+
+  const showAlert = (
+    title: string,
+    message: string,
+    type: "warning" | "info" | "danger" | "success" = "info",
+    event?: any
+  ) => {
+    let position = undefined;
+    if (event && event.currentTarget) {
+      try {
+        let targetElement = event.currentTarget;
+        if (targetElement.tagName === "FORM") {
+          const submitBtn = targetElement.querySelector('button[type="submit"]') || targetElement.querySelector('button');
+          if (submitBtn) {
+            targetElement = submitBtn;
+          }
+        }
+        const rect = targetElement.getBoundingClientRect();
+        const buttonWidth = rect.width;
+        const modalWidth = 320;
+        
+        let left = rect.left + buttonWidth / 2 - modalWidth / 2;
+        let top = rect.bottom + 8;
+        
+        if (left < 16) left = 16;
+        if (left + modalWidth > window.innerWidth - 16) {
+          left = window.innerWidth - modalWidth - 16;
+        }
+        
+        const modalHeight = 150;
+        if (top + modalHeight > window.innerHeight - 16) {
+          top = rect.top - modalHeight - 8;
+        }
+        if (top < 16) top = rect.bottom + 8;
+        
+        position = { top, left };
+      } catch {
+        // Fallback to center
+      }
+    }
+
+    setConfirmModal({
+      show: true,
+      title,
+      message,
+      confirmText: "OK",
+      cancelText: "",
+      onConfirm: () => {
+        setConfirmModal(prev => ({ ...prev, show: false }));
+      },
+      type,
+      position
+    });
+  };
+
+  // Compile flat leave requests list
+  const requests = useMemo(() => {
+    const list: (LeaveRequest & { empId: string })[] = [];
+    employees.forEach(emp => {
+      if (emp.leaveRequests) {
+        Object.values(emp.leaveRequests).forEach((req: any) => {
+          list.push({
+            ...req,
+            empId: emp.id
+          });
+        });
+      }
+    });
+
+    if (list.length === 0 && dbLoading) {
+      return mockLeaveRequests.map(r => ({ ...r, empId: "EMP001" }));
+    }
+
+    // Sort desc by appliedOn
+    return list.sort((a, b) => b.id.localeCompare(a.id));
+  }, [employees, dbLoading]);
+
+  const handleApplyLeave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formReason) {
-      alert("Please specify a reason");
+      showAlert("Validation Error", "Please specify a reason", "warning", e);
       return;
     }
-    const freshLeave: LeaveRequest = {
-      id: `LV00${requests.length + 1}`,
-      empName: "Admin User",
-      department: "Management",
+
+    const totalLeaveCount = employees.reduce((acc, emp) => acc + (emp.leaveRequests ? Object.keys(emp.leaveRequests).length : 0), 0);
+    const newId = `LV00${totalLeaveCount + 1}`;
+
+    const freshLeave = {
+      id: newId,
+      empName: activeEmpName,
+      department: activeEmpDept,
       leaveType: formLeaveType,
       fromDate: formFromDate,
       toDate: formToDate,
       duration: formDuration,
       reason: formReason,
-      status: "Pending",
+      status: "Pending" as const,
       appliedOn: new Date().toISOString().split("T")[0]
     };
-    setRequests(prev => [freshLeave, ...prev]);
-    setFormReason("");
+
+    try {
+      await updateDoc(doc(db, "employees", activeEmpId), {
+        [`leaveRequests.${newId}`]: freshLeave
+      });
+      setFormReason("");
+      showAlert("Success", "Leave request submitted successfully!", "success", e);
+    } catch (err: any) {
+      showAlert("Error", "Failed to submit leave request: " + err.message, "danger", e);
+    }
   };
 
-  const handleApproval = (id: string, action: "Approved" | "Rejected") => {
-    setRequests(prev =>
-      prev.map(req => (req.id === id ? { ...req, status: action } : req))
+  const handleApproval = async (empId: string, requestId: string, action: "Approved" | "Rejected") => {
+    try {
+      const emp = employees.find(e => e.id === empId);
+      if (!emp || !emp.leaveRequests || !emp.leaveRequests[requestId]) return;
+
+      const req = emp.leaveRequests[requestId];
+      const leaveType = req.leaveType;
+      const durationDays = parseFloat(req.duration.split(" ")[0]) || 1.0;
+
+      const updatePayload: Record<string, any> = {
+        [`leaveRequests.${requestId}.status`]: action,
+        [`leaveRequests.${requestId}.processedBy`]: employeeId || "Admin",
+        [`leaveRequests.${requestId}.processedAt`]: new Date().toISOString().split("T")[0]
+      };
+
+      if (action === "Approved" && emp.leaveBalances) {
+        let balanceKey = "annual";
+        if (leaveType.includes("Casual")) balanceKey = "casual";
+        else if (leaveType.includes("Medical")) balanceKey = "medical";
+        else if (leaveType.includes("Special")) balanceKey = "special";
+
+        const currentBalance = (emp.leaveBalances as any)[balanceKey] || 0;
+        const newBalance = Math.max(0, currentBalance - durationDays);
+        updatePayload[`leaveBalances.${balanceKey}`] = newBalance;
+      }
+
+      await updateDoc(doc(db, "employees", empId), updatePayload);
+    } catch (err: any) {
+      console.error("Error updating approval:", err);
+    }
+  };
+
+  const handleApprovalConfirm = (empId: string, requestId: string, action: "Approved" | "Rejected", event: React.MouseEvent) => {
+    showConfirm(
+      `Confirm Leave ${action === "Approved" ? "Approval" : "Rejection"}`,
+      `Are you sure you want to ${action.toLowerCase()} this leave request?`,
+      () => handleApproval(empId, requestId, action),
+      action === "Approved" ? "success" : "danger",
+      action === "Approved" ? "Approve" : "Reject",
+      "Cancel",
+      event
     );
   };
 
@@ -69,18 +324,24 @@ export default function LeavePage() {
     const pending = requests.filter(r => r.status === "Pending").length;
     const approved = requests.filter(r => r.status === "Approved").length;
     const rejected = requests.filter(r => r.status === "Rejected").length;
-    const totalTaken = 87.5; // Mock static count based on PDF
-    const available = 142.5;
+    
+    // Accumulate balances of active user (or sum all if admin)
+    const emp = employees.find(e => e.id === activeEmpId);
+    const available = emp && emp.leaveBalances
+      ? Object.values(emp.leaveBalances).reduce((a, b) => a + b, 0)
+      : 142.5;
+
+    const totalTaken = approved * 1.5; // simple mock scaling
 
     return {
       total: requests.length,
       pending,
       approved,
       rejected,
-      totalTaken,
+      totalTaken: totalTaken || 87.5,
       available
     };
-  }, [requests]);
+  }, [requests, employees, activeEmpId]);
 
   const filteredRequests = useMemo(() => {
     return requests.filter(req => {
@@ -91,13 +352,24 @@ export default function LeavePage() {
   }, [requests, searchTerm, statusFilter]);
 
   // Chart data
-  const balanceData = [
-    { name: "Annual Leave", value: 68.5, color: "#3b82f6" },
-    { name: "Casual Leave", value: 25.0, color: "#10b981" },
-    { name: "Medical Leave", value: 15.0, color: "#ef4444" },
-    { name: "Special Leave", value: 12.0, color: "#f59e0b" },
-    { name: "Other Leave", value: 22.0, color: "#6366f1" },
-  ];
+  const balanceData = useMemo(() => {
+    const emp = employees.find(e => e.id === activeEmpId);
+    if (emp && emp.leaveBalances) {
+      return [
+        { name: "Annual Leave", value: emp.leaveBalances.annual || 0, color: "#3b82f6" },
+        { name: "Casual Leave", value: emp.leaveBalances.casual || 0, color: "#10b981" },
+        { name: "Medical Leave", value: emp.leaveBalances.medical || 0, color: "#ef4444" },
+        { name: "Special Leave", value: emp.leaveBalances.special || 0, color: "#f59e0b" },
+      ];
+    }
+    return [
+      { name: "Annual Leave", value: 68.5, color: "#3b82f6" },
+      { name: "Casual Leave", value: 25.0, color: "#10b981" },
+      { name: "Medical Leave", value: 15.0, color: "#ef4444" },
+      { name: "Special Leave", value: 12.0, color: "#f59e0b" },
+      { name: "Other Leave", value: 22.0, color: "#6366f1" },
+    ];
+  }, [employees, activeEmpId]);
 
   const leaveTypesList = [
     { type: "Annual Leave", max: "14 Days", desc: "Paid annual leave allocation", active: true },
@@ -226,13 +498,13 @@ export default function LeavePage() {
                           {req.status === "Pending" ? (
                             <div className="flex items-center justify-center gap-1.5">
                               <button
-                                onClick={() => handleApproval(req.id, "Approved")}
+                                onClick={(e) => handleApprovalConfirm(req.empId, req.id, "Approved", e)}
                                 className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[10px] rounded-md transition-all cursor-pointer"
                               >
                                 Approve
                               </button>
                               <button
-                                onClick={() => handleApproval(req.id, "Rejected")}
+                                onClick={(e) => handleApprovalConfirm(req.empId, req.id, "Rejected", e)}
                                 className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-semibold text-[10px] rounded-md transition-all cursor-pointer"
                               >
                                 Reject
@@ -429,6 +701,97 @@ export default function LeavePage() {
           </table>
         </div>
       </div>
+
+      {/* Custom Confirmation Modal (positioned context-sensitively next to clicked action button) */}
+      {confirmModal.show && (
+        <div 
+          className="fixed inset-0 z-[100] bg-black/15 backdrop-blur-[1px] select-none p-4 animate-fade-in-fast"
+          onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+        >
+          <div 
+            className="absolute bg-white rounded-2xl w-full max-w-[320px] shadow-2xl border border-slate-100 p-5 space-y-4 z-[101] animate-pop-in"
+            style={confirmModal.position ? {
+              position: 'fixed',
+              top: confirmModal.position.top,
+              left: confirmModal.position.left
+            } : {
+              position: 'fixed',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              maxWidth: '380px'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3.5">
+              <div className={`p-2.5 rounded-full shrink-0 ${
+                confirmModal.type === "danger" 
+                  ? "bg-rose-50 text-rose-600 border border-rose-100" 
+                  : confirmModal.type === "warning"
+                  ? "bg-amber-50 text-amber-600 border border-amber-100"
+                  : confirmModal.type === "success"
+                  ? "bg-emerald-50 text-emerald-600 border border-emerald-100"
+                  : "bg-blue-50 text-blue-600 border border-blue-100"
+              }`}>
+                {confirmModal.type === "danger" ? (
+                  <XCircle className="h-5 w-5" />
+                ) : confirmModal.type === "warning" ? (
+                  <AlertTriangle className="h-5 w-5" />
+                ) : confirmModal.type === "success" ? (
+                  <CheckCircle className="h-5 w-5" />
+                ) : (
+                  <Users className="h-5 w-5" />
+                )}
+              </div>
+              <div className="space-y-0.5">
+                <h3 className="font-bold text-slate-800 text-xs leading-normal">
+                  {confirmModal.title}
+                </h3>
+                <p className="text-[10px] text-slate-500 font-semibold leading-relaxed">
+                  {confirmModal.message}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              {confirmModal.cancelText && (
+                <button
+                  type="button"
+                  onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+                  className="px-3.5 py-1.5 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition-colors cursor-pointer bg-white"
+                >
+                  {confirmModal.cancelText}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={confirmModal.onConfirm}
+                className={`px-3.5 py-1.5 text-white font-bold text-[10px] rounded-lg transition-all shadow-md cursor-pointer ${
+                  confirmModal.type === "danger"
+                    ? "bg-rose-600 hover:bg-rose-700 shadow-rose-500/10"
+                    : confirmModal.type === "warning"
+                    ? "bg-amber-600 hover:bg-amber-700 shadow-amber-500/10"
+                    : confirmModal.type === "success"
+                    ? "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-500/10"
+                    : "bg-blue-600 hover:bg-blue-700 shadow-blue-500/10"
+                }`}
+              >
+                {confirmModal.confirmText}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Loading Overlay */}
+      {dbLoading && (
+        <div className="fixed inset-0 bg-slate-900/10 backdrop-blur-xs flex items-center justify-center z-[200]">
+          <div className="bg-white px-5 py-3.5 rounded-2xl shadow-xl border border-slate-100 flex items-center gap-3">
+            <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+            <span className="text-xs font-bold text-slate-600">Connecting to Firestore...</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

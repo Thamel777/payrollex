@@ -60,6 +60,7 @@ export default function Dashboard() {
     cancelText: string;
     onConfirm: () => void | Promise<void>;
     type: "warning" | "info" | "danger" | "success";
+    position?: { top: number; left: number };
   }>({
     show: false,
     title: "",
@@ -76,8 +77,43 @@ export default function Dashboard() {
     onConfirm: () => void | Promise<void>,
     type: "warning" | "info" | "danger" | "success" = "info",
     confirmText: string = "Confirm",
-    cancelText: string = "Cancel"
+    cancelText: string = "Cancel",
+    event?: any
   ) => {
+    let position = undefined;
+    if (event && event.currentTarget) {
+      try {
+        let targetElement = event.currentTarget;
+        if (targetElement.tagName === "FORM") {
+          const submitBtn = targetElement.querySelector('button[type="submit"]') || targetElement.querySelector('button');
+          if (submitBtn) {
+            targetElement = submitBtn;
+          }
+        }
+        const rect = targetElement.getBoundingClientRect();
+        const buttonWidth = rect.width;
+        const modalWidth = 320;
+        
+        let left = rect.left + buttonWidth / 2 - modalWidth / 2;
+        let top = rect.bottom + 8;
+        
+        if (left < 16) left = 16;
+        if (left + modalWidth > window.innerWidth - 16) {
+          left = window.innerWidth - modalWidth - 16;
+        }
+        
+        const modalHeight = 180;
+        if (top + modalHeight > window.innerHeight - 16) {
+          top = rect.top - modalHeight - 8;
+        }
+        if (top < 16) top = rect.bottom + 8;
+        
+        position = { top, left };
+      } catch (err) {
+        console.error("Failed to calculate popup position:", err);
+      }
+    }
+
     setConfirmModal({
       show: true,
       title,
@@ -88,15 +124,51 @@ export default function Dashboard() {
         await onConfirm();
         setConfirmModal(prev => ({ ...prev, show: false }));
       },
-      type
+      type,
+      position
     });
   };
 
   const showAlert = (
     title: string,
     message: string,
-    type: "warning" | "info" | "danger" | "success" = "info"
+    type: "warning" | "info" | "danger" | "success" = "info",
+    event?: any
   ) => {
+    let position = undefined;
+    if (event && event.currentTarget) {
+      try {
+        let targetElement = event.currentTarget;
+        if (targetElement.tagName === "FORM") {
+          const submitBtn = targetElement.querySelector('button[type="submit"]') || targetElement.querySelector('button');
+          if (submitBtn) {
+            targetElement = submitBtn;
+          }
+        }
+        const rect = targetElement.getBoundingClientRect();
+        const buttonWidth = rect.width;
+        const modalWidth = 320;
+        
+        let left = rect.left + buttonWidth / 2 - modalWidth / 2;
+        let top = rect.bottom + 8;
+        
+        if (left < 16) left = 16;
+        if (left + modalWidth > window.innerWidth - 16) {
+          left = window.innerWidth - modalWidth - 16;
+        }
+        
+        const modalHeight = 150;
+        if (top + modalHeight > window.innerHeight - 16) {
+          top = rect.top - modalHeight - 8;
+        }
+        if (top < 16) top = rect.bottom + 8;
+        
+        position = { top, left };
+      } catch {
+        // Fallback to center
+      }
+    }
+
     setConfirmModal({
       show: true,
       title,
@@ -106,7 +178,8 @@ export default function Dashboard() {
       onConfirm: () => {
         setConfirmModal(prev => ({ ...prev, show: false }));
       },
-      type
+      type,
+      position
     });
   };
 
@@ -263,7 +336,7 @@ export default function Dashboard() {
     }
   };
 
-  const handleProcessAction = (item: any, action: "Approved" | "Rejected") => {
+  const handleProcessAction = (item: any, action: "Approved" | "Rejected", event?: any) => {
     if (item.type === "Correction") {
       const actionLabel = action === "Approved" ? "Approve" : "Reject";
       showConfirm(
@@ -271,12 +344,14 @@ export default function Dashboard() {
         `Are you sure you want to ${action.toLowerCase()} this correction request for ${item.name}?`,
         () => handleCorrectionAction(item.rawRequest, action),
         action === "Approved" ? "success" : "danger",
-        actionLabel
+        actionLabel,
+        "Cancel",
+        event
       );
     } else {
       // Mock action for Leave / OT
       setMockApprovals(prev => prev.filter(app => app.id !== item.id));
-      showAlert("Success", `Request was successfully ${action.toLowerCase()}!`, "success");
+      showAlert("Success", `Request was successfully ${action.toLowerCase()}!`, "success", event);
     }
   };
 
@@ -514,13 +589,13 @@ export default function Dashboard() {
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <button
-                        onClick={() => handleProcessAction(item, "Approved")}
+                        onClick={(e) => handleProcessAction(item, "Approved", e)}
                         className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-lg flex items-center gap-1 transition-all cursor-pointer"
                       >
                         <CheckCircle2 className="h-3.5 w-3.5" /> Approve
                       </button>
                       <button
-                        onClick={() => handleProcessAction(item, "Rejected")}
+                        onClick={(e) => handleProcessAction(item, "Rejected", e)}
                         className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-semibold text-xs rounded-lg flex items-center gap-1 transition-all cursor-pointer"
                       >
                         <XCircle className="h-3.5 w-3.5" /> Reject
@@ -597,10 +672,27 @@ export default function Dashboard() {
 
       {/* Custom Confirmation Modal */}
       {confirmModal.show && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-xs select-none p-4 animate-fade-in">
-          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl border border-slate-100 p-6 space-y-4">
-            <div className="flex items-start gap-4">
-              <div className={`p-3 rounded-full shrink-0 ${
+        <div 
+          className="fixed inset-0 z-[100] bg-black/15 backdrop-blur-[1px] select-none p-4 animate-fade-in-fast"
+          onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+        >
+          <div 
+            className="absolute bg-white rounded-2xl w-full max-w-[320px] shadow-2xl border border-slate-100 p-5 space-y-4 z-[101] animate-pop-in"
+            style={confirmModal.position ? {
+              position: 'fixed',
+              top: confirmModal.position.top,
+              left: confirmModal.position.left
+            } : {
+              position: 'fixed',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              maxWidth: '380px'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3.5">
+              <div className={`p-2.5 rounded-full shrink-0 ${
                 confirmModal.type === "danger" 
                   ? "bg-rose-50 text-rose-600 border border-rose-100" 
                   : confirmModal.type === "warning"
@@ -610,20 +702,20 @@ export default function Dashboard() {
                   : "bg-blue-50 text-blue-600 border border-blue-100"
               }`}>
                 {confirmModal.type === "danger" ? (
-                  <XCircle className="h-6 w-6" />
+                  <XCircle className="h-5 w-5" />
                 ) : confirmModal.type === "warning" ? (
-                  <AlertTriangle className="h-6 w-6" />
+                  <AlertTriangle className="h-5 w-5" />
                 ) : confirmModal.type === "success" ? (
-                  <CheckCircle2 className="h-6 w-6" />
+                  <CheckCircle2 className="h-5 w-5" />
                 ) : (
-                  <Users className="h-6 w-6" />
+                  <Users className="h-5 w-5" />
                 )}
               </div>
-              <div className="space-y-1">
-                <h3 className="font-bold text-slate-800 text-sm leading-normal">
+              <div className="space-y-0.5">
+                <h3 className="font-bold text-slate-800 text-xs leading-normal">
                   {confirmModal.title}
                 </h3>
-                <p className="text-xs text-slate-500 font-semibold leading-normal">
+                <p className="text-[10px] text-slate-500 font-semibold leading-relaxed">
                   {confirmModal.message}
                 </p>
               </div>
@@ -634,7 +726,7 @@ export default function Dashboard() {
                 <button
                   type="button"
                   onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
-                  className="px-4 py-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
+                  className="px-3.5 py-1.5 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition-colors cursor-pointer bg-white"
                 >
                   {confirmModal.cancelText}
                 </button>
@@ -642,7 +734,7 @@ export default function Dashboard() {
               <button
                 type="button"
                 onClick={confirmModal.onConfirm}
-                className={`px-4 py-2 text-white font-bold text-xs rounded-lg transition-all shadow-md cursor-pointer ${
+                className={`px-3.5 py-1.5 text-white font-bold text-[10px] rounded-lg transition-all shadow-md cursor-pointer ${
                   confirmModal.type === "danger"
                     ? "bg-rose-600 hover:bg-rose-700 shadow-rose-500/10"
                     : confirmModal.type === "warning"

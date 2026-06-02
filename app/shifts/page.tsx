@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   CalendarDays,
   Plus,
@@ -14,11 +14,18 @@ import {
   Clock,
   Bell,
   Briefcase,
-  Edit2
+  Edit2,
+  Trash2
 } from "lucide-react";
-import { mockEmployees, mockShifts, Shift } from "@/lib/mockData";
+import { mockEmployees, mockShifts, Shift, Employee } from "@/lib/mockData";
+import { db } from "@/lib/firebase";
+import { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, onSnapshot } from "firebase/firestore";
+import { useAuth } from "@/lib/AuthContext";
 
 export default function ShiftRosterPage() {
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [shifts, setShifts] = useState<Shift[]>([]);
+  const [dbLoading, setDbLoading] = useState(true);
   const [deptFilter, setDeptFilter] = useState("All");
   const [shiftFilter, setShiftFilter] = useState("All");
   const [viewMode, setViewMode] = useState("week"); // week, month
@@ -34,28 +41,302 @@ export default function ShiftRosterPage() {
     otAfter: 8
   });
 
-  // Extract unique departments
-  const departments = useMemo(() => {
-    return ["All", ...Array.from(new Set(mockEmployees.map(emp => emp.department)))];
+  // Active cell edit state for popover
+  const [activeCell, setActiveCell] = useState<{
+    empId: string;
+    date: string;
+    currentShift: string;
+    position: { top: number; left: number };
+    positionType: 'absolute' | 'fixed';
+  } | null>(null);
+
+  // Auth Context
+  const { user, role, employeeId } = useAuth();
+
+  // Shift templates modal state
+  const [showShiftModal, setShowShiftModal] = useState(false);
+  const [editingShift, setEditingShift] = useState<Shift | null>(null);
+  const [shiftForm, setShiftForm] = useState({
+    name: "",
+    time: "",
+    grace: "15m | Break: 1h",
+    break: "1 Hour",
+    status: "Active" as "Active" | "Inactive",
+    color: "bg-green-100 text-green-800 border-green-200"
+  });
+
+  // Bulk Allocation Modal State
+  const [showAllocateModal, setShowAllocateModal] = useState(false);
+  const [allocateForm, setAllocateForm] = useState({
+    department: "All",
+    shiftName: "",
+    dateOption: "week", // week, range, single
+    singleDate: "2024-05-20",
+    fromDate: "2024-05-20",
+    toDate: "2024-05-26"
+  });
+  const [isAllocating, setIsAllocating] = useState(false);
+
+  // Custom Snappy Confirm Popup Modal State
+  const [confirmModal, setConfirmModal] = useState<{
+    show: boolean;
+    title: string;
+    message: string;
+    confirmText: string;
+    cancelText: string;
+    onConfirm: () => void | Promise<void>;
+    type: "warning" | "info" | "danger" | "success";
+    position?: { top: number; left: number };
+  }>({
+    show: false,
+    title: "",
+    message: "",
+    confirmText: "Confirm",
+    cancelText: "Cancel",
+    onConfirm: () => {},
+    type: "info"
+  });
+
+  // Calculate manager department if user is a Department Manager
+  const managerDept = useMemo(() => {
+    if (role === "Department Manager" && employees.length > 0) {
+      const mgr = employees.find(
+        e => e.id === employeeId || (user?.email && e.email && e.email.toLowerCase() === user.email.toLowerCase())
+      );
+      return mgr?.department || "";
+    }
+    return "";
+  }, [role, employees, employeeId, user]);
+
+  // Set default department filter for department managers
+  useEffect(() => {
+    if (role === "Department Manager" && managerDept) {
+      setDeptFilter(managerDept);
+    }
+  }, [role, managerDept]);
+
+  // Custom snappy helper for confirmations
+  const showConfirm = (
+    title: string,
+    message: string,
+    onConfirm: () => void | Promise<void>,
+    type: "warning" | "info" | "danger" | "success" = "info",
+    confirmText: string = "Confirm",
+    cancelText: string = "Cancel",
+    event?: any
+  ) => {
+    let position: { top: number; left: number } | undefined = undefined;
+    if (event && event.currentTarget) {
+      try {
+        let targetElement = event.currentTarget;
+        if (targetElement.tagName === "FORM") {
+          const submitBtn = targetElement.querySelector('button[type="submit"]') || targetElement.querySelector('button');
+          if (submitBtn) {
+            targetElement = submitBtn;
+          }
+        }
+        const rect = targetElement.getBoundingClientRect();
+        const buttonWidth = rect.width;
+        const modalWidth = 320;
+        
+        let left = rect.left + buttonWidth / 2 - modalWidth / 2;
+        let top = rect.bottom + 8;
+        
+        if (left < 16) left = 16;
+        if (left + modalWidth > window.innerWidth - 16) {
+          left = window.innerWidth - modalWidth - 16;
+        }
+        
+        const modalHeight = 180;
+        if (top + modalHeight > window.innerHeight - 16) {
+          top = rect.top - modalHeight - 8;
+        }
+        if (top < 16) top = rect.bottom + 8;
+        
+        position = { top, left };
+      } catch (err) {
+        console.error("Failed to calculate popup position:", err);
+      }
+    }
+
+    setConfirmModal({
+      show: true,
+      title,
+      message,
+      confirmText,
+      cancelText,
+      onConfirm: async () => {
+        await onConfirm();
+        setConfirmModal(prev => ({ ...prev, show: false }));
+      },
+      type,
+      position
+    });
+  };
+
+  const showAlert = (
+    title: string,
+    message: string,
+    type: "warning" | "info" | "danger" | "success" = "info",
+    event?: any
+  ) => {
+    let position = undefined;
+    if (event && event.currentTarget) {
+      try {
+        let targetElement = event.currentTarget;
+        const rect = targetElement.getBoundingClientRect();
+        const buttonWidth = rect.width;
+        const modalWidth = 320;
+        
+        let left = rect.left + buttonWidth / 2 - modalWidth / 2;
+        let top = rect.bottom + 8;
+        
+        if (left < 16) left = 16;
+        if (left + modalWidth > window.innerWidth - 16) {
+          left = window.innerWidth - modalWidth - 16;
+        }
+        
+        const modalHeight = 150;
+        if (top + modalHeight > window.innerHeight - 16) {
+          top = rect.top - modalHeight - 8;
+        }
+        if (top < 16) top = rect.bottom + 8;
+        
+        position = { top, left };
+      } catch {
+        // Fallback
+      }
+    }
+    setConfirmModal({
+      show: true,
+      title,
+      message,
+      confirmText: "OK",
+      cancelText: "",
+      onConfirm: () => {
+        setConfirmModal(prev => ({ ...prev, show: false }));
+      },
+      type,
+      position
+    });
+  };
+
+  // Load shifts templates and rules, and employees
+  useEffect(() => {
+    const unsubShifts = onSnapshot(collection(db, "shifts"), (snapshot) => {
+      if (snapshot.empty) {
+        // Seed default shifts
+        mockShifts.forEach(async (s) => {
+          await setDoc(doc(db, "shifts", s.id), s);
+        });
+      } else {
+        const list: Shift[] = [];
+        snapshot.forEach(doc => {
+          list.push({ id: doc.id, ...doc.data() } as Shift);
+        });
+        setShifts(list);
+      }
+    });
+
+    const unsubEmp = onSnapshot(collection(db, "employees"), (snapshot) => {
+      const list: Employee[] = [];
+      snapshot.forEach(doc => {
+        list.push({ id: doc.id, ...doc.data() } as Employee);
+      });
+      setEmployees(list);
+      setDbLoading(false);
+    });
+
+    const fetchRules = async () => {
+      try {
+        const docRef = doc(db, "settings", "shift_rules");
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          setRules(docSnap.data() as any);
+        } else {
+          await setDoc(docRef, {
+            gracePeriod: 15,
+            lateAfter: "Grace Period",
+            earlyBefore: 15,
+            defaultBreak: 60,
+            minWorkHours: 8,
+            otAfter: 8
+          });
+        }
+      } catch (err) {
+        console.error("Failed to load shift rules:", err);
+      }
+    };
+
+    fetchRules();
+
+    return () => {
+      unsubShifts();
+      unsubEmp();
+    };
   }, []);
+
+  // Extract unique departments from Firestore employees (falling back to mock if db loading)
+  const departments = useMemo(() => {
+    const sourceList = employees.length > 0 ? employees : mockEmployees;
+    return ["All", ...Array.from(new Set(sourceList.map(emp => emp.department)))];
+  }, [employees]);
+
+  // Week dates mapping
+  const weekDates = ["2024-05-20", "2024-05-21", "2024-05-22", "2024-05-23", "2024-05-24", "2024-05-25", "2024-05-26"];
+
+  const getEmployeeShiftForDate = (emp: any, date: string) => {
+    if (emp.roster && emp.roster[date]) {
+      return emp.roster[date];
+    }
+    // Fallbacks to match original mock data
+    const dayOfWeek = new Date(date).getDay(); // 0 is Sunday, 1 is Monday, etc.
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+      return "Weekend Off";
+    }
+    if (emp.department === "Finance Department") {
+      return "Night Shift";
+    }
+    if (emp.department === "Operations Department" && dayOfWeek === 4) { // Thursday
+      return "Holiday Shift";
+    }
+    if (emp.department === "HR Department" && (dayOfWeek === 3 || dayOfWeek === 4)) { // Wed/Thu
+      return "Flexible Shift";
+    }
+    if (emp.department === "Marketing Department") {
+      return "Rotating Shift";
+    }
+    return "General Shift";
+  };
 
   // Filter roster rows
   const rosterData = useMemo(() => {
-    // Generate mock schedules for employees
-    const schedules = [
-      { name: "Nimal Perera", dept: "IT Department", mon: "General Shift", tue: "General Shift", wed: "General Shift", thu: "General Shift", fri: "General Shift", sat: "Weekend Off", sun: "Weekend Off" },
-      { name: "Kavindi Silva", dept: "HR Department", mon: "General Shift", tue: "General Shift", wed: "Flexible Shift", thu: "Flexible Shift", fri: "General Shift", sat: "Weekend Off", sun: "Weekend Off" },
-      { name: "Minura Fernando", dept: "Finance Department", mon: "Night Shift", tue: "Night Shift", wed: "Night Shift", thu: "Night Shift", fri: "Night Shift", sat: "Weekend Off", sun: "Weekend Off" },
-      { name: "Tharushi De Silva", dept: "Marketing Department", mon: "Rotating Shift", tue: "Rotating Shift", wed: "Rotating Shift", thu: "Rotating Shift", fri: "Rotating Shift", sat: "Weekend Off", sun: "Weekend Off" },
-      { name: "Kasun Rajapaksa", dept: "Operations Department", mon: "General Shift", tue: "General Shift", wed: "General Shift", thu: "Holiday Shift", fri: "General Shift", sat: "Weekend Off", sun: "Weekend Off" },
-      { name: "Isuri Madushani", dept: "IT Department", mon: "Flexible Shift", tue: "Flexible Shift", wed: "General Shift", thu: "Flexible Shift", fri: "General Shift", sat: "Weekend Off", sun: "Weekend Off" },
-      { name: "Ravindu Bandara", dept: "Finance Department", mon: "Night Shift", tue: "Night Shift", wed: "Night Shift", thu: "Night Shift", fri: "Night Shift", sat: "Weekend Off", sun: "Weekend Off" },
-      { name: "Pavithra Jayasinghe", dept: "HR Department", mon: "General Shift", tue: "General Shift", wed: "Flexible Shift", thu: "General Shift", fri: "Flexible Shift", sat: "Weekend Off", sun: "Weekend Off" }
-    ];
+    const sourceEmployees = employees.length > 0 ? employees : mockEmployees;
+    
+    const schedules = sourceEmployees.map(emp => {
+      const mon = getEmployeeShiftForDate(emp, "2024-05-20");
+      const tue = getEmployeeShiftForDate(emp, "2024-05-21");
+      const wed = getEmployeeShiftForDate(emp, "2024-05-22");
+      const thu = getEmployeeShiftForDate(emp, "2024-05-23");
+      const fri = getEmployeeShiftForDate(emp, "2024-05-24");
+      const sat = getEmployeeShiftForDate(emp, "2024-05-25");
+      const sun = getEmployeeShiftForDate(emp, "2024-05-26");
+      return {
+        id: emp.id,
+        name: emp.name,
+        dept: emp.department,
+        mon,
+        tue,
+        wed,
+        thu,
+        fri,
+        sat,
+        sun
+      };
+    });
 
     return schedules.filter(row => {
       const matchesDept = deptFilter === "All" || row.dept === deptFilter;
-      // Filter if any day matches the selected shift filter
       const matchesShift = shiftFilter === "All" ||
         row.mon === shiftFilter ||
         row.tue === shiftFilter ||
@@ -64,7 +345,7 @@ export default function ShiftRosterPage() {
         row.fri === shiftFilter;
       return matchesDept && matchesShift;
     });
-  }, [deptFilter, shiftFilter]);
+  }, [employees, deptFilter, shiftFilter]);
 
   const getShiftBadgeStyle = (shiftName: string) => {
     switch (shiftName) {
@@ -85,13 +366,193 @@ export default function ShiftRosterPage() {
     }
   };
 
-  const handleSaveRules = (e: React.FormEvent) => {
+  const handleCellClick = (empId: string, date: string, currentShift: string, event: React.MouseEvent) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const popupWidth = 180;
+    const popupHeight = 240;
+    
+    let left = rect.left + rect.width / 2 - popupWidth / 2;
+    let top = rect.bottom + 8;
+    
+    const pageRoot = document.getElementById("shifts-page-root");
+    let positionType: 'absolute' | 'fixed' = 'fixed';
+    if (pageRoot) {
+      const pageRect = pageRoot.getBoundingClientRect();
+      left = rect.left - pageRect.left + rect.width / 2 - popupWidth / 2;
+      top = rect.bottom - pageRect.top + 8;
+      positionType = 'absolute';
+      
+      if (left < 16) left = 16;
+      if (left + popupWidth > pageRect.width - 16) {
+        left = pageRect.width - popupWidth - 16;
+      }
+    } else {
+      if (left < 16) left = 16;
+      if (left + popupWidth > window.innerWidth - 16) {
+        left = window.innerWidth - popupWidth - 16;
+      }
+      if (top + popupHeight > window.innerHeight - 16) {
+        top = rect.top - popupHeight - 8;
+      }
+    }
+    
+    setActiveCell({
+      empId,
+      date,
+      currentShift,
+      position: { top, left },
+      positionType
+    });
+  };
+
+  const handleUpdateShift = async (empId: string, date: string, shiftName: string) => {
+    try {
+      await updateDoc(doc(db, "employees", empId), {
+        [`roster.${date}`]: shiftName
+      });
+      setActiveCell(null);
+    } catch (err) {
+      console.error("Failed to update shift:", err);
+    }
+  };
+
+  const handleSaveShift = async (e: React.FormEvent) => {
     e.preventDefault();
-    setShowRulesModal(false);
+    if (role !== "Admin" && role !== "HR Manager") {
+      showAlert("Access Denied", "You do not have permission to modify shift templates.", "danger", e);
+      return;
+    }
+    if (!shiftForm.name || !shiftForm.time) {
+      showAlert("Missing Fields", "Please provide both shift name and timings.", "warning", e);
+      return;
+    }
+    try {
+      const id = editingShift ? editingShift.id : "S" + Math.floor(1000 + Math.random() * 9000);
+      const newShift: Shift = {
+        id,
+        name: shiftForm.name,
+        time: shiftForm.time,
+        grace: shiftForm.grace || "15m | Break: 1h",
+        break: shiftForm.break || "1 Hour",
+        status: shiftForm.status,
+        color: shiftForm.color
+      };
+      await setDoc(doc(db, "shifts", id), newShift);
+      setShowShiftModal(false);
+      setEditingShift(null);
+      showAlert("Success", `Shift "${shiftForm.name}" saved successfully.`, "success", e);
+    } catch (err) {
+      console.error("Failed to save shift:", err);
+      showAlert("Error", "Failed to save shift template.", "danger", e);
+    }
+  };
+
+  const handleDeleteShift = async (shift: Shift, event: any) => {
+    if (role !== "Admin" && role !== "HR Manager") {
+      showAlert("Access Denied", "You do not have permission to delete shift templates.", "danger", event);
+      return;
+    }
+    showConfirm(
+      "Delete Shift",
+      `Are you sure you want to delete shift "${shift.name}"? This template will no longer be available for allocation.`,
+      async () => {
+        try {
+          await deleteDoc(doc(db, "shifts", shift.id));
+          showAlert("Deleted", `Shift "${shift.name}" has been deleted.`, "success", event);
+        } catch (err) {
+          console.error("Failed to delete shift:", err);
+          showAlert("Error", "Failed to delete shift.", "danger", event);
+        }
+      },
+      "danger",
+      "Delete",
+      "Cancel",
+      event
+    );
+  };
+
+  const handleBulkAllocate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!allocateForm.shiftName) {
+      showAlert("Missing Field", "Please select a shift to allocate.", "warning", e);
+      return;
+    }
+
+    const targetDept = role === "Department Manager" ? managerDept : allocateForm.department;
+    if (!targetDept || targetDept === "All") {
+      showAlert("Missing Field", "Please select a specific department.", "warning", e);
+      return;
+    }
+
+    setIsAllocating(true);
+    try {
+      // Get all employees matching department
+      const matchingEmployees = employees.filter(emp => emp.department === targetDept);
+      if (matchingEmployees.length === 0) {
+        showAlert("No Employees", `No employees found in the ${targetDept}.`, "info", e);
+        setIsAllocating(false);
+        return;
+      }
+
+      // Determine date list
+      let datesToUpdate: string[] = [];
+      if (allocateForm.dateOption === "week") {
+        datesToUpdate = ["2024-05-20", "2024-05-21", "2024-05-22", "2024-05-23", "2024-05-24", "2024-05-25", "2024-05-26"];
+      } else if (allocateForm.dateOption === "single") {
+        datesToUpdate = [allocateForm.singleDate];
+      } else {
+        // Date range
+        const start = new Date(allocateForm.fromDate);
+        const end = new Date(allocateForm.toDate);
+        let curr = new Date(start);
+        while (curr <= end) {
+          datesToUpdate.push(curr.toISOString().split("T")[0]);
+          curr.setDate(curr.getDate() + 1);
+        }
+      }
+
+      // Perform updates
+      for (const emp of matchingEmployees) {
+        const updatePayload: Record<string, string> = {};
+        datesToUpdate.forEach(date => {
+          updatePayload[`roster.${date}`] = allocateForm.shiftName;
+        });
+        await updateDoc(doc(db, "employees", emp.id), updatePayload);
+      }
+
+      setShowAllocateModal(false);
+      showAlert(
+        "Allocation Complete",
+        `Successfully allocated "${allocateForm.shiftName}" to ${matchingEmployees.length} employees in ${targetDept} for ${datesToUpdate.length} day(s).`,
+        "success",
+        e
+      );
+    } catch (err) {
+      console.error("Bulk allocation failed:", err);
+      showAlert("Error", "Failed to allocate shifts.", "danger", e);
+    } finally {
+      setIsAllocating(false);
+    }
+  };
+
+  const handleSaveRules = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (role !== "Admin" && role !== "HR Manager") {
+      showAlert("Access Denied", "You do not have permission to modify shift rules.", "danger", e);
+      return;
+    }
+    try {
+      await setDoc(doc(db, "settings", "shift_rules"), rules);
+      setShowRulesModal(false);
+      showAlert("Success", "Shift rules updated successfully.", "success", e);
+    } catch (err) {
+      console.error("Failed to save rules:", err);
+      showAlert("Error", "Failed to save rules.", "danger", e);
+    }
   };
 
   return (
-    <div className="space-y-6 select-none">
+    <div className="space-y-6 select-none relative" id="shifts-page-root">
       {/* KPI stats */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <div className="bg-white p-4 rounded-xl border border-card-border shadow-xs flex items-center gap-3">
@@ -181,7 +642,7 @@ export default function ShiftRosterPage() {
                   className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-600 bg-white"
                 >
                   <option value="All">All Shifts</option>
-                  {mockShifts.map(s => (
+                  {(shifts.length > 0 ? shifts : mockShifts).map(s => (
                     <option key={s.id} value={s.name}>{s.name}</option>
                   ))}
                 </select>
@@ -230,7 +691,7 @@ export default function ShiftRosterPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs">
                   {rosterData.map((row, index) => (
-                    <tr key={index} className="hover:bg-slate-50/30">
+                    <tr key={row.id || index} className="hover:bg-slate-50/30">
                       <td className="py-3 px-4">
                         <div className="flex flex-col">
                           <span className="font-bold text-slate-700">{row.name}</span>
@@ -238,37 +699,58 @@ export default function ShiftRosterPage() {
                         </div>
                       </td>
                       <td className="py-3 px-2 text-center">
-                        <span className={`inline-block px-2.5 py-1 rounded-md text-[9px] font-bold ${getShiftBadgeStyle(row.mon)}`}>
+                        <span 
+                          onClick={(e) => handleCellClick(row.id, "2024-05-20", row.mon, e)}
+                          className={`inline-block px-2.5 py-1 rounded-md text-[9px] font-bold cursor-pointer hover:opacity-80 transition-all ${getShiftBadgeStyle(row.mon)}`}
+                        >
                           {row.mon}
                         </span>
                       </td>
                       <td className="py-3 px-2 text-center">
-                        <span className={`inline-block px-2.5 py-1 rounded-md text-[9px] font-bold ${getShiftBadgeStyle(row.tue)}`}>
+                        <span 
+                          onClick={(e) => handleCellClick(row.id, "2024-05-21", row.tue, e)}
+                          className={`inline-block px-2.5 py-1 rounded-md text-[9px] font-bold cursor-pointer hover:opacity-80 transition-all ${getShiftBadgeStyle(row.tue)}`}
+                        >
                           {row.tue}
                         </span>
                       </td>
                       <td className="py-3 px-2 text-center">
-                        <span className={`inline-block px-2.5 py-1 rounded-md text-[9px] font-bold ${getShiftBadgeStyle(row.wed)}`}>
+                        <span 
+                          onClick={(e) => handleCellClick(row.id, "2024-05-22", row.wed, e)}
+                          className={`inline-block px-2.5 py-1 rounded-md text-[9px] font-bold cursor-pointer hover:opacity-80 transition-all ${getShiftBadgeStyle(row.wed)}`}
+                        >
                           {row.wed}
                         </span>
                       </td>
                       <td className="py-3 px-2 text-center">
-                        <span className={`inline-block px-2.5 py-1 rounded-md text-[9px] font-bold ${getShiftBadgeStyle(row.thu)}`}>
+                        <span 
+                          onClick={(e) => handleCellClick(row.id, "2024-05-23", row.thu, e)}
+                          className={`inline-block px-2.5 py-1 rounded-md text-[9px] font-bold cursor-pointer hover:opacity-80 transition-all ${getShiftBadgeStyle(row.thu)}`}
+                        >
                           {row.thu}
                         </span>
                       </td>
                       <td className="py-3 px-2 text-center">
-                        <span className={`inline-block px-2.5 py-1 rounded-md text-[9px] font-bold ${getShiftBadgeStyle(row.fri)}`}>
+                        <span 
+                          onClick={(e) => handleCellClick(row.id, "2024-05-24", row.fri, e)}
+                          className={`inline-block px-2.5 py-1 rounded-md text-[9px] font-bold cursor-pointer hover:opacity-80 transition-all ${getShiftBadgeStyle(row.fri)}`}
+                        >
                           {row.fri}
                         </span>
                       </td>
                       <td className="py-3 px-2 text-center bg-slate-50/20">
-                        <span className={`inline-block px-2.5 py-1 rounded-md text-[9px] font-bold ${getShiftBadgeStyle(row.sat)}`}>
+                        <span 
+                          onClick={(e) => handleCellClick(row.id, "2024-05-25", row.sat, e)}
+                          className={`inline-block px-2.5 py-1 rounded-md text-[9px] font-bold cursor-pointer hover:opacity-80 transition-all ${getShiftBadgeStyle(row.sat)}`}
+                        >
                           {row.sat}
                         </span>
                       </td>
                       <td className="py-3 px-2 text-center bg-slate-50/20">
-                        <span className={`inline-block px-2.5 py-1 rounded-md text-[9px] font-bold ${getShiftBadgeStyle(row.sun)}`}>
+                        <span 
+                          onClick={(e) => handleCellClick(row.id, "2024-05-26", row.sun, e)}
+                          className={`inline-block px-2.5 py-1 rounded-md text-[9px] font-bold cursor-pointer hover:opacity-80 transition-all ${getShiftBadgeStyle(row.sun)}`}
+                        >
                           {row.sun}
                         </span>
                       </td>
@@ -292,16 +774,70 @@ export default function ShiftRosterPage() {
           <div className="bg-white p-5 rounded-2xl border border-card-border shadow-xs">
             <div className="flex justify-between items-center pb-3 border-b border-slate-100 mb-4">
               <h3 className="text-sm font-bold text-slate-800">Shift Types</h3>
-              <button className="p-1 hover:bg-slate-50 rounded-md text-blue-600 cursor-pointer" title="Add Shift">
-                <Plus className="h-4.5 w-4.5" />
-              </button>
+              {(role === "Admin" || role === "HR Manager") && (
+                <button
+                  onClick={() => {
+                    setEditingShift(null);
+                    setShiftForm({
+                      name: "",
+                      time: "",
+                      grace: "15m | Break: 1h",
+                      break: "1 Hour",
+                      status: "Active",
+                      color: "bg-green-100 text-green-800 border-green-200"
+                    });
+                    setShowShiftModal(true);
+                  }}
+                  className="p-1 hover:bg-slate-50 rounded-md text-blue-600 cursor-pointer"
+                  title="Add Shift"
+                >
+                  <Plus className="h-4.5 w-4.5" />
+                </button>
+              )}
             </div>
             <div className="space-y-3 max-h-[19.5rem] overflow-y-auto pr-1">
-              {mockShifts.map((shift) => (
-                <div key={shift.id} className="p-3 bg-slate-50 border border-slate-100 rounded-xl hover:border-slate-200 transition-all flex flex-col gap-1.5">
+              {(shifts.length > 0 ? shifts : mockShifts).map((shift) => (
+                <div key={shift.id} className="p-3 bg-slate-50 border border-slate-100 rounded-xl hover:border-slate-200 transition-all flex flex-col gap-1.5 group relative">
                   <div className="flex items-center justify-between">
                     <span className="font-bold text-slate-700 text-xs">{shift.name}</span>
-                    <span className="px-1.5 py-0.2 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded text-[9px] font-bold">Active</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
+                        shift.status === "Active" 
+                          ? "bg-emerald-50 text-emerald-700 border border-emerald-100" 
+                          : "bg-slate-100 text-slate-500 border border-slate-200"
+                      }`}>
+                        {shift.status}
+                      </span>
+                      {(role === "Admin" || role === "HR Manager") && (
+                        <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 bg-white border border-slate-200 rounded p-0.5">
+                          <button
+                            onClick={() => {
+                              setEditingShift(shift);
+                              setShiftForm({
+                                name: shift.name,
+                                time: shift.time,
+                                grace: shift.grace,
+                                break: shift.break,
+                                status: shift.status as "Active" | "Inactive",
+                                color: shift.color
+                              });
+                              setShowShiftModal(true);
+                            }}
+                            className="p-0.5 hover:bg-slate-100 rounded text-slate-500 hover:text-blue-600 transition-colors cursor-pointer"
+                            title="Edit Shift"
+                          >
+                            <Edit2 className="h-3 w-3" />
+                          </button>
+                          <button
+                            onClick={(e) => handleDeleteShift(shift, e)}
+                            className="p-0.5 hover:bg-slate-100 rounded text-slate-500 hover:text-red-600 transition-colors cursor-pointer"
+                            title="Delete Shift"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="flex items-center justify-between text-[10px] text-slate-500 font-medium">
                     <span className="flex items-center gap-1"><Clock className="h-3.5 w-3.5" /> {shift.time}</span>
@@ -376,30 +912,49 @@ export default function ShiftRosterPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs">
-                  <tr className="hover:bg-slate-50/30">
-                    <td className="py-3 px-4 font-bold text-slate-700">IT Department</td>
-                    <td className="py-3 px-4 text-slate-600 font-semibold">General Shift, Night Shift, Flexible Shift</td>
-                    <td className="py-3 px-4 text-center font-bold text-slate-700">45</td>
-                    <td className="py-3 px-4 text-center">
-                      <button className="p-1 text-slate-400 hover:text-blue-600 hover:bg-slate-100 rounded transition-colors"><Edit2 className="h-3.5 w-3.5 mx-auto" /></button>
-                    </td>
-                  </tr>
-                  <tr className="hover:bg-slate-50/30">
-                    <td className="py-3 px-4 font-bold text-slate-700">HR Department</td>
-                    <td className="py-3 px-4 text-slate-600 font-semibold">General Shift, Flexible Shift</td>
-                    <td className="py-3 px-4 text-center font-bold text-slate-700">32</td>
-                    <td className="py-3 px-4 text-center">
-                      <button className="p-1 text-slate-400 hover:text-blue-600 hover:bg-slate-100 rounded transition-colors"><Edit2 className="h-3.5 w-3.5 mx-auto" /></button>
-                    </td>
-                  </tr>
-                  <tr className="hover:bg-slate-50/30">
-                    <td className="py-3 px-4 font-bold text-slate-700">Finance Department</td>
-                    <td className="py-3 px-4 text-slate-600 font-semibold">General Shift, Night Shift</td>
-                    <td className="py-3 px-4 text-center font-bold text-slate-700">38</td>
-                    <td className="py-3 px-4 text-center">
-                      <button className="p-1 text-slate-400 hover:text-blue-600 hover:bg-slate-100 rounded transition-colors"><Edit2 className="h-3.5 w-3.5 mx-auto" /></button>
-                    </td>
-                  </tr>
+                  {departments.filter(dept => dept !== "All").map((dept) => {
+                    const empCount = employees.filter(e => e.department === dept).length;
+                    const isMgrForThisDept = role === "Department Manager" && managerDept === dept;
+                    const canAllocate = role === "Admin" || role === "HR Manager" || isMgrForThisDept;
+                    
+                    // Extract unique assigned shifts for this department from dynamic employee roster maps
+                    const assignedShifts = Array.from(new Set(
+                      employees
+                        .filter(e => e.department === dept && e.roster)
+                        .flatMap(e => Object.values(e.roster || {}))
+                    )).filter(Boolean).join(", ") || "General Shift, Weekend Off";
+
+                    return (
+                      <tr key={dept} className="hover:bg-slate-50/30">
+                        <td className="py-3 px-4 font-bold text-slate-700">{dept}</td>
+                        <td className="py-3 px-4 text-slate-600 font-semibold">{assignedShifts}</td>
+                        <td className="py-3 px-4 text-center font-bold text-slate-700">{empCount}</td>
+                        <td className="py-3 px-4 text-center">
+                          {canAllocate ? (
+                            <button
+                              onClick={() => {
+                                setAllocateForm({
+                                  department: dept,
+                                  shiftName: "",
+                                  dateOption: "week",
+                                  singleDate: "2024-05-20",
+                                  fromDate: "2024-05-20",
+                                  toDate: "2024-05-26"
+                                });
+                                setShowAllocateModal(true);
+                              }}
+                              className="p-1 text-slate-400 hover:text-blue-600 hover:bg-slate-100 rounded transition-colors cursor-pointer"
+                              title={`Allocate Shifts to ${dept}`}
+                            >
+                              <Edit2 className="h-3.5 w-3.5 mx-auto" />
+                            </button>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 font-medium italic">Read-only</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -493,6 +1048,368 @@ export default function ShiftRosterPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add/Edit Shift Modal */}
+      {showShiftModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl border border-slate-100">
+            <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-2xl">
+              <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
+                <Clock className="h-4.5 w-4.5 text-blue-600" />
+                {editingShift ? "Edit Shift Template" : "Add Shift Template"}
+              </h3>
+            </div>
+            <form onSubmit={handleSaveShift} className="p-6 space-y-4">
+              <div className="space-y-3.5 text-xs">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Shift Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={shiftForm.name}
+                    onChange={(e) => setShiftForm(prev => ({ ...prev, name: e.target.value }))}
+                    placeholder="e.g. Night Shift"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Timings</label>
+                  <input
+                    type="text"
+                    required
+                    value={shiftForm.time}
+                    onChange={(e) => setShiftForm(prev => ({ ...prev, time: e.target.value }))}
+                    placeholder="e.g. 06:00 PM - 03:00 AM"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Grace & Break Info</label>
+                  <input
+                    type="text"
+                    value={shiftForm.grace}
+                    onChange={(e) => setShiftForm(prev => ({ ...prev, grace: e.target.value }))}
+                    placeholder="e.g. 15m | Break: 1h"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 font-semibold"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Break Duration</label>
+                  <input
+                    type="text"
+                    value={shiftForm.break}
+                    onChange={(e) => setShiftForm(prev => ({ ...prev, break: e.target.value }))}
+                    placeholder="e.g. 1 Hour"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 font-semibold"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Status</label>
+                  <select
+                    value={shiftForm.status}
+                    onChange={(e) => setShiftForm(prev => ({ ...prev, status: e.target.value as "Active" | "Inactive" }))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 font-semibold bg-white"
+                  >
+                    <option value="Active">Active</option>
+                    <option value="Inactive">Inactive</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Color Theme</label>
+                  <select
+                    value={shiftForm.color}
+                    onChange={(e) => setShiftForm(prev => ({ ...prev, color: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 font-semibold bg-white"
+                  >
+                    <option value="bg-green-100 text-green-800 border-green-200">Green Badge (General)</option>
+                    <option value="bg-purple-100 text-purple-800 border-purple-200">Purple Badge (Night)</option>
+                    <option value="bg-blue-100 text-blue-800 border-blue-200">Blue Badge (Flexible)</option>
+                    <option value="bg-orange-100 text-orange-800 border-orange-200">Orange Badge (Rotating)</option>
+                    <option value="bg-indigo-100 text-indigo-800 border-indigo-200">Indigo Badge (Weekend)</option>
+                    <option value="bg-red-100 text-red-800 border-red-200">Red Badge (Holiday)</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setShowShiftModal(false)}
+                  className="px-4 py-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors"
+                >
+                  Close
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-lg shadow-md shadow-blue-500/10"
+                >
+                  Save Shift
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Shift Allocation Modal */}
+      {showAllocateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl border border-slate-100">
+            <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-2xl">
+              <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
+                <Building className="h-4.5 w-4.5 text-blue-600" />
+                Department Shift Allocation
+              </h3>
+            </div>
+            <form onSubmit={handleBulkAllocate} className="p-6 space-y-4">
+              <div className="space-y-3.5 text-xs">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Selected Department</label>
+                  <input
+                    type="text"
+                    disabled
+                    value={allocateForm.department}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-slate-500 bg-slate-50 font-bold focus:outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Select Shift to Assign</label>
+                  <select
+                    required
+                    value={allocateForm.shiftName}
+                    onChange={(e) => setAllocateForm(prev => ({ ...prev, shiftName: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold bg-white"
+                  >
+                    <option value="">-- Choose Shift --</option>
+                    {(shifts.length > 0 ? shifts : mockShifts).map(s => (
+                      <option key={s.id} value={s.name}>{s.name}</option>
+                    ))}
+                    <option value="Weekend Off">Weekend Off</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date Configuration</label>
+                  <div className="flex gap-2">
+                    <label className="flex items-center gap-1.5 font-semibold text-slate-700">
+                      <input
+                        type="radio"
+                        name="dateOption"
+                        value="week"
+                        checked={allocateForm.dateOption === "week"}
+                        onChange={() => setAllocateForm(prev => ({ ...prev, dateOption: "week" }))}
+                      />
+                      Active Week
+                    </label>
+                    <label className="flex items-center gap-1.5 font-semibold text-slate-700">
+                      <input
+                        type="radio"
+                        name="dateOption"
+                        value="single"
+                        checked={allocateForm.dateOption === "single"}
+                        onChange={() => setAllocateForm(prev => ({ ...prev, dateOption: "single" }))}
+                      />
+                      Single Date
+                    </label>
+                    <label className="flex items-center gap-1.5 font-semibold text-slate-700">
+                      <input
+                        type="radio"
+                        name="dateOption"
+                        value="range"
+                        checked={allocateForm.dateOption === "range"}
+                        onChange={() => setAllocateForm(prev => ({ ...prev, dateOption: "range" }))}
+                      />
+                      Custom Range
+                    </label>
+                  </div>
+                </div>
+
+                {allocateForm.dateOption === "single" && (
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Select Date</label>
+                    <input
+                      type="date"
+                      required
+                      value={allocateForm.singleDate}
+                      onChange={(e) => setAllocateForm(prev => ({ ...prev, singleDate: e.target.value }))}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold"
+                    />
+                  </div>
+                )}
+
+                {allocateForm.dateOption === "range" && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">From Date</label>
+                      <input
+                        type="date"
+                        required
+                        value={allocateForm.fromDate}
+                        onChange={(e) => setAllocateForm(prev => ({ ...prev, fromDate: e.target.value }))}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">To Date</label>
+                      <input
+                        type="date"
+                        required
+                        value={allocateForm.toDate}
+                        onChange={(e) => setAllocateForm(prev => ({ ...prev, toDate: e.target.value }))}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="flex justify-end gap-2 pt-3">
+                <button
+                  type="button"
+                  disabled={isAllocating}
+                  onClick={() => setShowAllocateModal(false)}
+                  className="px-4 py-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors"
+                >
+                  Close
+                </button>
+                <button
+                  type="submit"
+                  disabled={isAllocating}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-lg shadow-md shadow-blue-500/10 flex items-center gap-1.5"
+                >
+                  {isAllocating && <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>}
+                  Allocate
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Snappy Confirmation Popup Modal Overlay */}
+      {confirmModal.show && (
+        <div 
+          className="fixed inset-0 z-[1000] bg-transparent"
+          onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+        >
+          <div 
+            className="absolute bg-white rounded-2xl shadow-xl border border-slate-200 p-4 w-[320px] z-[1001] animate-pop-in text-xs font-semibold"
+            style={confirmModal.position ? {
+              position: 'fixed',
+              top: confirmModal.position.top,
+              left: confirmModal.position.left
+            } : {
+              position: 'fixed',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className={`p-2.5 rounded-lg ${
+                confirmModal.type === "danger" 
+                  ? "bg-rose-50 text-rose-600" 
+                  : confirmModal.type === "warning"
+                  ? "bg-amber-50 text-amber-600"
+                  : confirmModal.type === "success"
+                  ? "bg-emerald-50 text-emerald-600"
+                  : "bg-blue-50 text-blue-600"
+              }`}>
+                <Clock className="h-5 w-5" />
+              </div>
+              <div className="space-y-1 pr-2">
+                <span className="font-bold text-slate-800 text-sm block">
+                  {confirmModal.title}
+                </span>
+                <p className="text-[10px] text-slate-400 font-medium leading-normal">
+                  {confirmModal.message}
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-slate-100">
+              {confirmModal.cancelText && (
+                <button
+                  onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+                  className="px-3.5 py-1.5 border border-slate-200 hover:bg-slate-50 text-slate-500 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                >
+                  {confirmModal.cancelText}
+                </button>
+              )}
+              <button
+                onClick={confirmModal.onConfirm}
+                className={`px-3.5 py-1.5 text-white font-bold rounded-lg text-[10px] shadow-sm cursor-pointer ${
+                  confirmModal.type === "danger"
+                    ? "bg-rose-600 hover:bg-rose-700 shadow-rose-500/10"
+                    : confirmModal.type === "warning"
+                    ? "bg-amber-600 hover:bg-amber-700 shadow-amber-500/10"
+                    : confirmModal.type === "success"
+                    ? "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-500/10"
+                    : "bg-blue-600 hover:bg-blue-700 shadow-blue-500/10"
+                }`}
+              >
+                {confirmModal.confirmText}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Active Cell Shift Selection Popover (positioned context-sensitively next to action button/cell) */}
+      {activeCell && (
+        <>
+          {/* Overlay to catch clicks and close */}
+          <div 
+            className="fixed inset-0 z-[100] bg-transparent"
+            onClick={() => setActiveCell(null)}
+          />
+          {/* Popover content rendered at root, absolute/fixed to shifts-page-root */}
+          <div 
+            className="bg-white rounded-xl shadow-xl border border-slate-200 p-2 w-[180px] z-[101] animate-pop-in"
+            style={{
+              position: activeCell.positionType,
+              top: activeCell.position.top,
+              left: activeCell.position.left
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-[10px] font-bold text-slate-400 px-2.5 py-1.5 uppercase tracking-wider border-b border-slate-100">
+              Select Shift
+            </div>
+            <div className="py-1 max-h-[200px] overflow-y-auto">
+              {shifts.map(s => (
+                <button
+                  key={s.id}
+                  onClick={() => handleUpdateShift(activeCell.empId, activeCell.date, s.name)}
+                  className={`w-full text-left px-2.5 py-1.5 text-xs font-semibold rounded-md hover:bg-slate-50 transition-colors flex items-center justify-between cursor-pointer ${
+                    activeCell.currentShift === s.name ? "text-blue-600 bg-blue-50/50" : "text-slate-700"
+                  }`}
+                >
+                  {s.name}
+                  {activeCell.currentShift === s.name && <span className="w-1.5 h-1.5 rounded-full bg-blue-600"></span>}
+                </button>
+              ))}
+              <button
+                onClick={() => handleUpdateShift(activeCell.empId, activeCell.date, "Weekend Off")}
+                className={`w-full text-left px-2.5 py-1.5 text-xs font-semibold rounded-md hover:bg-slate-50 transition-colors flex items-center justify-between cursor-pointer ${
+                  activeCell.currentShift === "Weekend Off" ? "text-blue-600 bg-blue-50/50" : "text-slate-700"
+                }`}
+              >
+                Weekend Off
+                {activeCell.currentShift === "Weekend Off" && <span className="w-1.5 h-1.5 rounded-full bg-blue-600"></span>}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Loading Overlay */}
+      {dbLoading && (
+        <div className="fixed inset-0 bg-slate-900/10 backdrop-blur-xs flex items-center justify-center z-[200]">
+          <div className="bg-white px-5 py-3.5 rounded-2xl shadow-xl border border-slate-100 flex items-center gap-3">
+            <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+            <span className="text-xs font-bold text-slate-600">Connecting to Firestore...</span>
           </div>
         </div>
       )}
