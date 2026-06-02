@@ -14,7 +14,7 @@ import {
   FileText
 } from "lucide-react";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend } from "recharts";
-import { mockEmployees, mockOvertimeRequests, Employee } from "@/lib/mockData";
+import { mockEmployees, Employee } from "@/lib/mockData";
 import Link from "next/link";
 import { db } from "@/lib/firebase";
 import { doc, getDoc, setDoc, onSnapshot, collection } from "firebase/firestore";
@@ -105,9 +105,13 @@ export default function PayrollPage() {
         .map((a: any) => ({ name: a.name, amount: a.amount }));
       const allowanceAmount = allowanceItems.reduce((sum: number, curr: any) => sum + curr.amount, 0);
 
-      const empOtRequests = mockOvertimeRequests.filter(r => r.name === emp.name && r.status === "Approved");
-      const otHours = empOtRequests.reduce((sum, r) => sum + r.hours, 0);
-      const otAmount = empOtRequests.reduce((sum, r) => sum + r.amount, 0);
+      // Read live OT from employee's Firestore overtimeRequests field, filtered to the selected period
+      const periodYearMonth = selectedPeriod === "May 2024" ? "2024-05" : selectedPeriod === "April 2024" ? "2024-04" : selectedPeriod.replace(" ", "-").toLowerCase();
+      const empOtRequests = Object.values((emp as any).overtimeRequests || {}).filter(
+        (r: any) => r.status === "Approved" && r.date && r.date.startsWith(periodYearMonth)
+      ) as any[];
+      const otHours = empOtRequests.reduce((sum: number, r: any) => sum + (r.hours || 0), 0);
+      const otAmount = empOtRequests.reduce((sum: number, r: any) => sum + (r.amount || 0), 0);
 
       const gross = basic + allowanceAmount + otAmount;
 
