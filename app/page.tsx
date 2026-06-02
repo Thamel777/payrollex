@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import {
   Users,
   Clock,
@@ -31,21 +31,254 @@ import {
   Legend
 } from "recharts";
 import Link from "next/link";
+import { db } from "@/lib/firebase";
+import { collection, onSnapshot, doc, updateDoc } from "firebase/firestore";
+import { Employee } from "@/lib/mockData";
 
 export default function Dashboard() {
   const [mounted, setMounted] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState("Connected");
   const [lastSyncTime, setLastSyncTime] = useState("Today, 10:15 AM");
-  const [pendingApprovals, setPendingApprovals] = useState([
+
+  // Firestore collections states
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [dbLoading, setDbLoading] = useState(true);
+
+  // Mock leave/OT approvals
+  const [mockApprovals, setMockApprovals] = useState([
     { id: "LV-01", type: "Leave", name: "Kavindi Silva", dept: "HR", details: "Medical Leave (1 Day)", status: "Pending" },
     { id: "OT-01", type: "Overtime", name: "Minura Fernando", dept: "Finance", details: "Night OT (4 Hours)", status: "Pending" },
-    { id: "AT-01", type: "Correction", name: "Ravindu Bandara", dept: "Finance", details: "Missing Punch (May 19)", status: "Pending" },
   ]);
+
+  // Custom Confirmation Modal State
+  const [confirmModal, setConfirmModal] = useState<{
+    show: boolean;
+    title: string;
+    message: string;
+    confirmText: string;
+    cancelText: string;
+    onConfirm: () => void | Promise<void>;
+    type: "warning" | "info" | "danger" | "success";
+  }>({
+    show: false,
+    title: "",
+    message: "",
+    confirmText: "Confirm",
+    cancelText: "Cancel",
+    onConfirm: () => {},
+    type: "info"
+  });
+
+  const showConfirm = (
+    title: string,
+    message: string,
+    onConfirm: () => void | Promise<void>,
+    type: "warning" | "info" | "danger" | "success" = "info",
+    confirmText: string = "Confirm",
+    cancelText: string = "Cancel"
+  ) => {
+    setConfirmModal({
+      show: true,
+      title,
+      message,
+      confirmText,
+      cancelText,
+      onConfirm: async () => {
+        await onConfirm();
+        setConfirmModal(prev => ({ ...prev, show: false }));
+      },
+      type
+    });
+  };
+
+  const showAlert = (
+    title: string,
+    message: string,
+    type: "warning" | "info" | "danger" | "success" = "info"
+  ) => {
+    setConfirmModal({
+      show: true,
+      title,
+      message,
+      confirmText: "OK",
+      cancelText: "",
+      onConfirm: () => {
+        setConfirmModal(prev => ({ ...prev, show: false }));
+      },
+      type
+    });
+  };
 
   useEffect(() => {
     setMounted(true);
+
+    // Listen to employees for real-time correction requests updates
+    const unsub = onSnapshot(collection(db, "employees"), (snapshot) => {
+      const list: Employee[] = [];
+      snapshot.forEach(docSnap => {
+        list.push({ id: docSnap.id, ...docSnap.data() } as Employee);
+      });
+      setEmployees(list);
+      setDbLoading(false);
+    }, (error) => {
+      console.error("Failed to load employees for dashboard:", error);
+      setDbLoading(false);
+    });
+
+    return () => unsub();
   }, []);
+
+  // Compute pending corrections dynamically from Firestore
+  const dbCorrections = useMemo(() => {
+    const list: any[] = [];
+    employees.forEach(emp => {
+      if (emp.correctionRequests) {
+        Object.values(emp.correctionRequests).forEach(req => {
+          if (req.status === "Pending") {
+            list.push({
+              id: req.id,
+              empId: emp.id,
+              type: "Correction",
+              name: emp.name,
+              dept: emp.department,
+              details: `${req.type} (${req.date})`,
+              status: "Pending",
+              rawRequest: req
+            });
+          }
+        });
+      }
+    });
+    return list;
+  }, [employees]);
+
+  // Combine mock Leave/OT with database Corrections
+  const pendingApprovals = useMemo(() => {
+    return [...mockApprovals, ...dbCorrections];
+  }, [mockApprovals, dbCorrections]);
+
+  // Calculate status and workHours from punch times
+  const calculatePunchStatusAndHours = (inTime: string, outTime: string): { status: "Present" | "Late" | "Early Leave" | "Absent" | "Missing Punch"; workHours: string; lateMin: number } => {
+    if (!inTime || inTime === "--:--" || !outTime || outTime === "--:--") {
+      if ((!inTime || inTime === "--:--") && (!outTime || outTime === "--:--")) {
+        return { status: "Absent", workHours: "0h 00m", lateMin: 0 };
+      }
+      return { status: "Missing Punch", workHours: "0h 00m", lateMin: 0 };
+    }
+
+    try {
+      const parseTime = (t: string) => {
+        const match = t.match(/(\d+):(\d+)\s*(AM|PM)?/i);
+        if (!match) return null;
+        let hr = parseInt(match[1]);
+        const min = parseInt(match[2]);
+        const ampm = match[3];
+        if (ampm) {
+          if (ampm.toUpperCase() === "PM" && hr < 12) hr += 12;
+          if (ampm.toUpperCase() === "AM" && hr === 12) hr = 0;
+        }
+        return hr * 60 + min;
+      };
+
+      const inMin = parseTime(inTime);
+      const outMin = parseTime(outTime);
+
+      if (inMin === null || outMin === null) {
+        return { status: "Missing Punch", workHours: "0h 00m", lateMin: 0 };
+      }
+
+      let diff = outMin - inMin;
+      if (diff < 0) diff += 24 * 60; // overnight
+
+      const netWorked = diff > 300 ? diff - 60 : diff;
+      const hrs = Math.floor(netWorked / 60);
+      const mins = netWorked % 60;
+      const workHours = `${hrs}h ${String(mins).padStart(2, "0")}m`;
+
+      const shiftStartMin = 8 * 60 + 30;
+      let lateMin = 0;
+      if (inMin > shiftStartMin + 15) {
+        lateMin = inMin - shiftStartMin;
+      }
+
+      let status: "Present" | "Late" | "Early Leave" = "Present";
+      if (lateMin > 0) {
+        status = "Late";
+      }
+
+      const shiftEndMin = 17 * 60 + 30;
+      if (outMin < shiftEndMin && status !== "Late") {
+        status = "Early Leave";
+      }
+
+      return { status, workHours, lateMin };
+    } catch {
+      return { status: "Missing Punch", workHours: "0h 00m", lateMin: 0 };
+    }
+  };
+
+  const handleCorrectionAction = async (req: any, action: "Approved" | "Rejected") => {
+    try {
+      const emp = employees.find(e => e.id === req.empId);
+      if (!emp) throw new Error("Employee not found");
+
+      const updatedCorrections = { ...(emp.correctionRequests || {}) };
+      if (updatedCorrections[req.id]) {
+        updatedCorrections[req.id] = {
+          ...updatedCorrections[req.id],
+          status: action,
+          processedBy: "admin@kawdoco.com",
+          processedAt: new Date().toISOString()
+        };
+      }
+
+      const updatePayload: Record<string, any> = {
+        correctionRequests: updatedCorrections
+      };
+
+      if (action === "Approved") {
+        const inTime = req.requestedInTime || "--:--";
+        const outTime = req.requestedOutTime || "--:--";
+        const { status, workHours, lateMin } = calculatePunchStatusAndHours(inTime, outTime);
+
+        updatePayload.attendanceLogs = {
+          ...(emp.attendanceLogs || {}),
+          [req.date]: {
+            shift: "General Shift",
+            inTime,
+            outTime,
+            status,
+            workHours,
+            lateMin
+          }
+        };
+      }
+
+      await updateDoc(doc(db, "employees", emp.id), updatePayload);
+      showAlert("Success", `Correction request was successfully ${action.toLowerCase()}!`, "success");
+    } catch (e: any) {
+      console.error("Error processing correction:", e);
+      showAlert("Error", "Failed to process correction: " + e.message, "danger");
+    }
+  };
+
+  const handleProcessAction = (item: any, action: "Approved" | "Rejected") => {
+    if (item.type === "Correction") {
+      const actionLabel = action === "Approved" ? "Approve" : "Reject";
+      showConfirm(
+        `${actionLabel} Correction Request`,
+        `Are you sure you want to ${action.toLowerCase()} this correction request for ${item.name}?`,
+        () => handleCorrectionAction(item.rawRequest, action),
+        action === "Approved" ? "success" : "danger",
+        actionLabel
+      );
+    } else {
+      // Mock action for Leave / OT
+      setMockApprovals(prev => prev.filter(app => app.id !== item.id));
+      showAlert("Success", `Request was successfully ${action.toLowerCase()}!`, "success");
+    }
+  };
 
   const handleSync = () => {
     setIsSyncing(true);
@@ -54,10 +287,6 @@ export default function Dashboard() {
       const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       setLastSyncTime(`Today, ${time}`);
     }, 1500);
-  };
-
-  const handleApprove = (id: string) => {
-    setPendingApprovals(prev => prev.filter(app => app.id !== id));
   };
 
   // Mock data for charts
@@ -269,7 +498,7 @@ export default function Dashboard() {
                   >
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-xs shrink-0">
-                        {item.name.split(" ").map(n => n[0]).join("")}
+                        {item.name.split(" ").map((n: string) => n[0]).join("")}
                       </div>
                       <div className="flex flex-col">
                         <div className="flex items-center gap-2">
@@ -285,13 +514,13 @@ export default function Dashboard() {
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <button
-                        onClick={() => handleApprove(item.id)}
+                        onClick={() => handleProcessAction(item, "Approved")}
                         className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-lg flex items-center gap-1 transition-all cursor-pointer"
                       >
                         <CheckCircle2 className="h-3.5 w-3.5" /> Approve
                       </button>
                       <button
-                        onClick={() => handleApprove(item.id)}
+                        onClick={() => handleProcessAction(item, "Rejected")}
                         className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-semibold text-xs rounded-lg flex items-center gap-1 transition-all cursor-pointer"
                       >
                         <XCircle className="h-3.5 w-3.5" /> Reject
@@ -365,6 +594,70 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Custom Confirmation Modal */}
+      {confirmModal.show && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-xs select-none p-4 animate-fade-in">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl border border-slate-100 p-6 space-y-4">
+            <div className="flex items-start gap-4">
+              <div className={`p-3 rounded-full shrink-0 ${
+                confirmModal.type === "danger" 
+                  ? "bg-rose-50 text-rose-600 border border-rose-100" 
+                  : confirmModal.type === "warning"
+                  ? "bg-amber-50 text-amber-600 border border-amber-100"
+                  : confirmModal.type === "success"
+                  ? "bg-emerald-50 text-emerald-600 border border-emerald-100"
+                  : "bg-blue-50 text-blue-600 border border-blue-100"
+              }`}>
+                {confirmModal.type === "danger" ? (
+                  <XCircle className="h-6 w-6" />
+                ) : confirmModal.type === "warning" ? (
+                  <AlertTriangle className="h-6 w-6" />
+                ) : confirmModal.type === "success" ? (
+                  <CheckCircle2 className="h-6 w-6" />
+                ) : (
+                  <Users className="h-6 w-6" />
+                )}
+              </div>
+              <div className="space-y-1">
+                <h3 className="font-bold text-slate-800 text-sm leading-normal">
+                  {confirmModal.title}
+                </h3>
+                <p className="text-xs text-slate-500 font-semibold leading-normal">
+                  {confirmModal.message}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              {confirmModal.cancelText && (
+                <button
+                  type="button"
+                  onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+                  className="px-4 py-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  {confirmModal.cancelText}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={confirmModal.onConfirm}
+                className={`px-4 py-2 text-white font-bold text-xs rounded-lg transition-all shadow-md cursor-pointer ${
+                  confirmModal.type === "danger"
+                    ? "bg-rose-600 hover:bg-rose-700 shadow-rose-500/10"
+                    : confirmModal.type === "warning"
+                    ? "bg-amber-600 hover:bg-amber-700 shadow-amber-500/10"
+                    : confirmModal.type === "success"
+                    ? "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-500/10"
+                    : "bg-blue-600 hover:bg-blue-700 shadow-blue-500/10"
+                }`}
+              >
+                {confirmModal.confirmText}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

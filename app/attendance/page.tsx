@@ -136,6 +136,7 @@ export default function AttendancePage() {
     cancelText: string;
     onConfirm: () => void | Promise<void>;
     type: "warning" | "info" | "danger" | "success";
+    position?: { top: number; left: number };
   }>({
     show: false,
     title: "",
@@ -152,8 +153,36 @@ export default function AttendancePage() {
     onConfirm: () => void | Promise<void>,
     type: "warning" | "info" | "danger" | "success" = "info",
     confirmText: string = "Confirm",
-    cancelText: string = "Cancel"
+    cancelText: string = "Cancel",
+    event?: any
   ) => {
+    let position = undefined;
+    if (event && event.currentTarget) {
+      try {
+        const rect = event.currentTarget.getBoundingClientRect();
+        const buttonWidth = rect.width;
+        const modalWidth = 320;
+        
+        let left = rect.left + buttonWidth / 2 - modalWidth / 2;
+        let top = rect.bottom + 8;
+        
+        if (left < 16) left = 16;
+        if (left + modalWidth > window.innerWidth - 16) {
+          left = window.innerWidth - modalWidth - 16;
+        }
+        
+        const modalHeight = 180;
+        if (top + modalHeight > window.innerHeight - 16) {
+          top = rect.top - modalHeight - 8;
+        }
+        if (top < 16) top = rect.bottom + 8;
+        
+        position = { top: top + window.scrollY, left: left + window.scrollX };
+      } catch (err) {
+        console.error("Failed to calculate popup position:", err);
+      }
+    }
+
     setConfirmModal({
       show: true,
       title,
@@ -164,14 +193,16 @@ export default function AttendancePage() {
         await onConfirm();
         setConfirmModal(prev => ({ ...prev, show: false }));
       },
-      type
+      type,
+      position
     });
   };
 
   const showAlert = (
     title: string,
     message: string,
-    type: "warning" | "info" | "danger" | "success" = "info"
+    type: "warning" | "info" | "danger" | "success" = "info",
+    event?: any
   ) => {
     setConfirmModal({
       show: true,
@@ -182,7 +213,28 @@ export default function AttendancePage() {
       onConfirm: () => {
         setConfirmModal(prev => ({ ...prev, show: false }));
       },
-      type
+      type,
+      position: event && event.currentTarget ? (() => {
+        try {
+          const rect = event.currentTarget.getBoundingClientRect();
+          const buttonWidth = rect.width;
+          const modalWidth = 320;
+          let left = rect.left + buttonWidth / 2 - modalWidth / 2;
+          let top = rect.bottom + 8;
+          if (left < 16) left = 16;
+          if (left + modalWidth > window.innerWidth - 16) {
+            left = window.innerWidth - modalWidth - 16;
+          }
+          const modalHeight = 150;
+          if (top + modalHeight > window.innerHeight - 16) {
+            top = rect.top - modalHeight - 8;
+          }
+          if (top < 16) top = rect.bottom + 8;
+          return { top: top + window.scrollY, left: left + window.scrollX };
+        } catch {
+          return undefined;
+        }
+      })() : undefined
     });
   };
 
@@ -509,7 +561,7 @@ export default function AttendancePage() {
   };
 
   // Sync Action - Write to employees collection
-  const handleSync = () => {
+  const handleSync = (e?: any) => {
     setIsSyncing(true);
     setTimeout(async () => {
       try {
@@ -540,10 +592,10 @@ export default function AttendancePage() {
           }
         }
         
-        showAlert("Sync Success", "BioStar 2 logs synchronized successfully!", "success");
+        showAlert("Sync Success", "BioStar 2 logs synchronized successfully!", "success", e);
       } catch (e) {
         console.error("Error updating logs on sync:", e);
-        showAlert("Sync Error", "Sync failed: " + (e as Error).message, "danger");
+        showAlert("Sync Error", "Sync failed: " + (e as Error).message, "danger", e);
       } finally {
         setIsSyncing(false);
       }
@@ -551,7 +603,7 @@ export default function AttendancePage() {
   };
 
   // Process correction request - Update employee nested document
-  const handleCorrectionAction = (req: CorrectionRequest, action: "Approved" | "Rejected") => {
+  const handleCorrectionAction = (req: CorrectionRequest, action: "Approved" | "Rejected", e?: any) => {
     const actionLabel = action === "Approved" ? "Approve" : "Reject";
     showConfirm(
       `${actionLabel} Correction Request`,
@@ -594,14 +646,16 @@ export default function AttendancePage() {
           }
 
           await updateDoc(doc(db, "employees", emp.id), updatePayload);
-          showAlert("Success", `Correction request was successfully ${action.toLowerCase()}!`, "success");
-        } catch (e) {
-          console.error("Error processing correction:", e);
-          showAlert("Error", "Failed to process correction: " + (e as Error).message, "danger");
+          showAlert("Success", `Correction request was successfully ${action.toLowerCase()}!`, "success", e);
+        } catch (err) {
+          console.error("Error processing correction:", err);
+          showAlert("Error", "Failed to process correction: " + (err as Error).message, "danger", e);
         }
       },
       action === "Approved" ? "info" : "danger",
-      actionLabel
+      actionLabel,
+      "Cancel",
+      e
     );
   };
 
@@ -696,7 +750,7 @@ export default function AttendancePage() {
   };
 
   // Initialize all logs for selected date as Absent - Write to employees collection
-  const handleInitializeLogs = async () => {
+  const handleInitializeLogs = async (e?: any) => {
     if (employees.length === 0) return;
     
     showConfirm(
@@ -720,13 +774,15 @@ export default function AttendancePage() {
               attendanceLogs: updatedLogs
             });
           }
-          showAlert("Success", "Daily log sheet initialized successfully!", "success");
-        } catch (e) {
-          showAlert("Error", "Failed to initialize logs: " + (e as Error).message, "danger");
+          showAlert("Success", "Daily log sheet initialized successfully!", "success", e);
+        } catch (err) {
+          showAlert("Error", "Failed to initialize logs: " + (err as Error).message, "danger", e);
         }
       },
       "info",
-      "Initialize"
+      "Initialize",
+      "Cancel",
+      e
     );
   };
 
@@ -1024,9 +1080,7 @@ export default function AttendancePage() {
         {/* LEFT COLUMN(S): Table (takes 2 cols if drawer open, otherwise 3 cols) */}
         {/* Hidden for plain Employee who gets only their comprehensive view */}
         {!isEmployee && (
-          <div className={`bg-white rounded-2xl border border-card-border shadow-xs overflow-hidden flex flex-col justify-between transition-all duration-300 ${
-            selectedEmp ? "lg:col-span-2" : "lg:col-span-3"
-          }`}>
+          <div className="bg-white rounded-2xl border border-card-border shadow-xs overflow-hidden flex flex-col justify-between transition-all duration-300 lg:col-span-2">
             <div>
               {/* Table Filters */}
               <div className="p-5 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -1095,7 +1149,7 @@ export default function AttendancePage() {
                 <div className="flex items-center gap-2 shrink-0">
                   {dailyLogs.length === 0 && canAddEdit && (
                     <button
-                      onClick={handleInitializeLogs}
+                      onClick={(event) => handleInitializeLogs(event)}
                       className="px-3 py-1.5 bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
                     >
                       <SlidersHorizontal className="h-3.5 w-3.5" /> Initialize Sheet
@@ -1223,7 +1277,7 @@ export default function AttendancePage() {
         )}
 
         {/* RIGHT COLUMN: Slides Open Details (Comprehensive View) or default Analytics Charts */}
-        <div className={`space-y-6 ${isEmployee ? "lg:col-span-3" : ""}`}>
+        <div className={`space-y-6 ${isEmployee ? "lg:col-span-3" : "lg:col-span-1"}`}>
           
           {/* A. Selected Employee: Comprehensive Attendance History Panel */}
           {selectedEmp ? (
@@ -1443,7 +1497,7 @@ export default function AttendancePage() {
                   {mounted ? (
                     <ResponsiveContainer width="100%" height={180}>
                       <LineChart data={timelineData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                         <XAxis dataKey="time" tickLine={false} axisLine={false} style={{ fontSize: "9px", fill: "#94a3b8" }} />
                         <YAxis tickLine={false} axisLine={false} style={{ fontSize: "9px", fill: "#94a3b8" }} />
                         <Tooltip />
@@ -1456,145 +1510,141 @@ export default function AttendancePage() {
                   )}
                 </div>
               </div>
+
+              {/* Device Sync Info Box */}
+              <div className="bg-white p-6 rounded-2xl border border-card-border shadow-xs flex flex-col justify-between">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-50">
+                    <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+                      <Fingerprint className="h-4.5 w-4.5 text-blue-600" />
+                      BioStar 2 Machine
+                    </h3>
+                    <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 font-bold text-[9px] rounded-full border border-emerald-200">
+                      Connected
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 text-xs">
+                    <div className="space-y-0.5">
+                      <span className="text-slate-400 font-medium">Device Name</span>
+                      <p className="font-bold text-slate-700">BS2-Core</p>
+                    </div>
+                    <div className="space-y-0.5">
+                      <span className="text-slate-400 font-medium">IP Address</span>
+                      <p className="font-bold text-slate-700">192.168.1.201</p>
+                    </div>
+                    <div className="space-y-0.5">
+                      <span className="text-slate-400 font-medium">Last Sync</span>
+                      <p className="font-bold text-slate-700">Today, 10:15 AM</p>
+                    </div>
+                    <div className="space-y-0.5">
+                      <span className="text-slate-400 font-medium">Logs Today</span>
+                      <p className="font-bold text-slate-700">1,245 punch logs</p>
+                    </div>
+                  </div>
+                </div>
+                {canAddEdit ? (
+                  <button
+                    onClick={(event) => handleSync(event)}
+                    disabled={isSyncing}
+                    className="w-full mt-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 hover:text-slate-900 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-all disabled:opacity-70 focus:outline-none cursor-pointer bg-white"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 text-slate-600 ${isSyncing ? "animate-spin" : ""}`} />
+                    {isSyncing ? "Synchronizing logs..." : "Sync Now"}
+                  </button>
+                ) : (
+                  <div className="text-[10px] text-slate-400 italic text-center pt-4">Automatic synchronization active</div>
+                )}
+              </div>
             </>
           )}
 
         </div>
       </div>
 
-      {/* Sync State & Manual Corrections Row (Hidden for plain Employees) */}
+      {/* Manual Corrections Row (Hidden for plain Employees) */}
       {!isEmployee && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          
-          {/* Device Sync Info Box */}
-          <div className="bg-white p-6 rounded-2xl border border-card-border shadow-xs flex flex-col justify-between">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-50">
-                <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
-                  <Fingerprint className="h-4.5 w-4.5 text-blue-600" />
-                  BioStar 2 Machine
-                </h3>
-                <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 font-bold text-[9px] rounded-full border border-emerald-200">
-                  Connected
-                </span>
-              </div>
-              <div className="grid grid-cols-2 gap-4 text-xs">
-                <div className="space-y-0.5">
-                  <span className="text-slate-400 font-medium">Device Name</span>
-                  <p className="font-bold text-slate-700">BS2-Core</p>
-                </div>
-                <div className="space-y-0.5">
-                  <span className="text-slate-400 font-medium">IP Address</span>
-                  <p className="font-bold text-slate-700">192.168.1.201</p>
-                </div>
-                <div className="space-y-0.5">
-                  <span className="text-slate-400 font-medium">Last Sync</span>
-                  <p className="font-bold text-slate-700">Today, 10:15 AM</p>
-                </div>
-                <div className="space-y-0.5">
-                  <span className="text-slate-400 font-medium">Logs Today</span>
-                  <p className="font-bold text-slate-700">1,245 punch logs</p>
-                </div>
+        <div className="bg-white rounded-2xl border border-card-border shadow-xs overflow-hidden flex flex-col justify-between w-full mt-6">
+          <div>
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-slate-800">Manual Correction Requests</h3>
+                <p className="text-xs text-slate-400">Employee punch modification adjustments</p>
               </div>
             </div>
-            {canAddEdit ? (
-              <button
-                onClick={handleSync}
-                disabled={isSyncing}
-                className="w-full mt-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 hover:text-slate-900 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-all disabled:opacity-70 focus:outline-none cursor-pointer bg-white"
-              >
-                <RefreshCw className={`h-3.5 w-3.5 text-slate-600 ${isSyncing ? "animate-spin" : ""}`} />
-                {isSyncing ? "Synchronizing logs..." : "Sync Now"}
-              </button>
-            ) : (
-              <div className="text-[10px] text-slate-400 italic text-center pt-4">Automatic synchronization active</div>
-            )}
-          </div>
-
-          {/* Manual Corrections Requests */}
-          <div className="bg-white rounded-2xl border border-card-border shadow-xs lg:col-span-2 overflow-hidden flex flex-col justify-between">
-            <div>
-              <div className="p-5 border-b border-slate-100 flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-800">Manual Correction Requests</h3>
-                  <p className="text-xs text-slate-400">Employee punch modification adjustments</p>
-                </div>
-              </div>
-              <div className="overflow-x-auto max-h-[12rem]">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-slate-50/75 border-b border-slate-100 text-[10px] font-bold text-slate-400 tracking-wider uppercase">
-                      <th className="py-2.5 px-4">Employee</th>
-                      <th className="py-2.5 px-4">Request Date</th>
-                      <th className="py-2.5 px-4">Adjustment Type</th>
-                      <th className="py-2.5 px-4">Requested Punch</th>
-                      <th className="py-2.5 px-4">Reason</th>
-                      <th className="py-2.5 px-4">Status</th>
-                      {canApprove && <th className="py-2.5 px-4 text-center">Action</th>}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-xs">
-                    {corrections.length > 0 ? (
-                      corrections.map((item) => (
-                        <tr key={item.id} className="hover:bg-slate-50/30">
-                          <td className="py-3 px-4 font-bold text-slate-700">{item.empName}</td>
-                          <td className="py-3 px-4 text-slate-500 font-medium">{item.date}</td>
-                          <td className="py-3 px-4">
-                            <span className="font-semibold text-slate-600">{item.type}</span>
-                          </td>
-                          <td className="py-3 px-4 font-mono font-bold text-[10px] text-slate-600">
-                            IN: {item.requestedInTime || "--:--"} | OUT: {item.requestedOutTime || "--:--"}
-                          </td>
-                          <td className="py-3 px-4 text-slate-500 font-medium max-w-xs truncate" title={item.reason}>
-                            {item.reason}
-                          </td>
-                          <td className="py-3 px-4">
-                            <span
-                              className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                                item.status === "Approved"
-                                  ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
-                                  : item.status === "Rejected"
-                                  ? "bg-rose-50 text-rose-700 border border-rose-100"
-                                  : "bg-amber-50 text-amber-700 border border-amber-100"
-                              }`}
-                            >
-                              {item.status}
-                            </span>
-                          </td>
-                          {canApprove && (
-                            <td className="py-3 px-4 text-center">
-                              {item.status === "Pending" ? (
-                                <div className="flex items-center justify-center gap-1.5">
-                                  <button
-                                    onClick={() => handleCorrectionAction(item, "Approved")}
-                                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[10px] rounded-md transition-colors flex items-center gap-0.5 cursor-pointer"
-                                  >
-                                    <CheckCircle2 className="h-3 w-3" /> Approve
-                                  </button>
-                                  <button
-                                    onClick={() => handleCorrectionAction(item, "Rejected")}
-                                    className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-semibold text-[10px] rounded-md transition-colors flex items-center gap-0.5 cursor-pointer"
-                                  >
-                                    <XCircle className="h-3 w-3" /> Reject
-                                  </button>
-                                </div>
-                              ) : (
-                                <span className="text-[10px] text-slate-400 font-medium">Processed</span>
-                              )}
-                            </td>
-                          )}
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan={canApprove ? 7 : 6} className="py-8 text-center text-slate-400 font-medium">
-                          No correction requests logged.
+            <div className="overflow-x-auto max-h-[12rem]">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50/75 border-b border-slate-100 text-[10px] font-bold text-slate-400 tracking-wider uppercase">
+                    <th className="py-2.5 px-4">Employee</th>
+                    <th className="py-2.5 px-4">Request Date</th>
+                    <th className="py-2.5 px-4">Adjustment Type</th>
+                    <th className="py-2.5 px-4">Requested Punch</th>
+                    <th className="py-2.5 px-4">Reason</th>
+                    <th className="py-2.5 px-4">Status</th>
+                    {canApprove && <th className="py-2.5 px-4 text-center">Action</th>}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-xs">
+                  {corrections.length > 0 ? (
+                    corrections.map((item) => (
+                      <tr key={item.id} className="hover:bg-slate-50/30">
+                        <td className="py-3 px-4 font-bold text-slate-700">{item.empName}</td>
+                        <td className="py-3 px-4 text-slate-500 font-medium">{item.date}</td>
+                        <td className="py-3 px-4">
+                          <span className="font-semibold text-slate-600">{item.type}</span>
                         </td>
+                        <td className="py-3 px-4 font-mono font-bold text-[10px] text-slate-600">
+                          IN: {item.requestedInTime || "--:--"} | OUT: {item.requestedOutTime || "--:--"}
+                        </td>
+                        <td className="py-3 px-4 text-slate-500 font-medium max-w-xs truncate" title={item.reason}>
+                          {item.reason}
+                        </td>
+                        <td className="py-3 px-4">
+                          <span
+                            className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                              item.status === "Approved"
+                                ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
+                                : item.status === "Rejected"
+                                ? "bg-rose-50 text-rose-700 border border-rose-100"
+                                : "bg-amber-50 text-amber-700 border border-amber-100"
+                            }`}
+                          >
+                            {item.status}
+                          </span>
+                        </td>
+                        {canApprove && (
+                          <td className="py-3 px-4 text-center">
+                            {item.status === "Pending" ? (
+                              <div className="flex items-center justify-center gap-1.5">
+                                <button
+                                  onClick={(event) => handleCorrectionAction(item, "Approved", event)}
+                                  className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[10px] rounded-md transition-colors flex items-center gap-0.5 cursor-pointer"
+                                >
+                                  <CheckCircle2 className="h-3 w-3" /> Approve
+                                </button>
+                                <button
+                                  onClick={(event) => handleCorrectionAction(item, "Rejected", event)}
+                                  className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-semibold text-[10px] rounded-md transition-colors flex items-center gap-0.5 cursor-pointer"
+                                >
+                                  <XCircle className="h-3 w-3" /> Reject
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 font-medium">Processed</span>
+                            )}
+                          </td>
+                        )}
                       </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={canApprove ? 7 : 6} className="py-8 text-center text-slate-400 font-medium">
+                        No correction requests logged.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
