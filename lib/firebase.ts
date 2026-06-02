@@ -1,9 +1,9 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: "AIzaSyAfvzR24EE3-GeMDEfR42BGuaFLaA-1CCw",
   authDomain: "payrollex-6ddfd.firebaseapp.com",
   projectId: "payrollex-6ddfd",
@@ -15,6 +15,10 @@ const firebaseConfig = {
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager()
+  })
+});
 export const storage = getStorage(app);
 export default app;
