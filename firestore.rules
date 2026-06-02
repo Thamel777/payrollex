@@ -92,5 +92,14 @@ service cloud.firestore {
         getUserRole() in ['Admin', 'HR Manager']
       );
     }
+
+    // Payroll Runs Rules
+    match /payroll_runs/{period} {
+      function getUserRole() {
+        return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+      }
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && getUserRole() in ['Admin', 'HR Manager', 'Accounts Officer'];
+    }
   }
 }

@@ -16,13 +16,20 @@ import {
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend } from "recharts";
 import { mockEmployees, Employee } from "@/lib/mockData";
 import Link from "next/link";
+import { db } from "@/lib/firebase";
+import { doc, getDoc, setDoc, onSnapshot, collection } from "firebase/firestore";
 
 export default function PayrollPage() {
   const [mounted, setMounted] = useState(false);
+  const [selectedPeriod, setSelectedPeriod] = useState("May 2024");
   const [deptFilter, setDeptFilter] = useState("All");
   const [payrollStatus, setPayrollStatus] = useState("Pending"); // Draft, Pending, Approved, Paid
   const [isCalculating, setIsCalculating] = useState(false);
   const [payrollStep, setPayrollStep] = useState(2); // 1 = Draft, 2 = Pending, 3 = Approved, 4 = Paid
+
+  const [dbEmployees, setDbEmployees] = useState<Employee[]>([]);
+  const [settingsData, setSettingsData] = useState<any>({ allowances: [], deductions: [] });
+  const [payrollRunData, setPayrollRunData] = useState<any>(null);
 
   const [deptPage, setDeptPage] = useState(1);
   const [empPayrollPage, setEmpPayrollPage] = useState(1);
@@ -34,44 +41,190 @@ export default function PayrollPage() {
 
   useEffect(() => {
     setMounted(true);
+
+    // 1. Sync employee list
+    const unsubEmployees = onSnapshot(collection(db, "employees"), (snapshot) => {
+      const list: Employee[] = [];
+      snapshot.forEach((doc) => {
+        list.push({ id: doc.id, ...doc.data() } as Employee);
+      });
+      setDbEmployees(list);
+    });
+
+    // 2. Sync allowances/deductions settings
+    const unsubSettings = onSnapshot(doc(db, "settings", "allowances_deductions"), (docSnap) => {
+      if (docSnap.exists()) {
+        setSettingsData(docSnap.data());
+      }
+    });
+
+    return () => {
+      unsubEmployees();
+      unsubSettings();
+    };
   }, []);
 
-  const handleGeneratePayroll = () => {
+  // Sync / load payroll runs whenever the selected period changes
+  useEffect(() => {
+    if (!mounted) return;
+    const unsubPayroll = onSnapshot(doc(db, "payroll_runs", selectedPeriod), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setPayrollRunData(data);
+        setPayrollStatus(data.status || "Pending");
+        if (data.status === "Draft") setPayrollStep(1);
+        else if (data.status === "Pending") setPayrollStep(2);
+        else if (data.status === "Approved") setPayrollStep(3);
+        else if (data.status === "Paid") setPayrollStep(4);
+      } else {
+        setPayrollRunData(null);
+        setPayrollStatus("Pending");
+        setPayrollStep(2);
+      }
+    });
+    return () => unsubPayroll();
+  }, [selectedPeriod, mounted]);
+
+  // Shared salary computation helper — runs whenever employees or settings change
+  const calcTax = (income: number) => {
+    if (income <= 100000) return 0;
+    const taxable = income - 100000;
+    if (taxable <= 41667) return taxable * 0.06;
+    if (taxable <= 83334) return 41667 * 0.06 + (taxable - 41667) * 0.12;
+    return 41667 * 0.06 + 41667 * 0.12 + (taxable - 83334) * 0.18;
+  };
+
+  const liveComputedEmployees = useMemo(() => {
+    const employeesList = dbEmployees.length > 0 ? dbEmployees : mockEmployees;
+    return employeesList.map(emp => {
+      const basic = emp.basicSalary || 0;
+
+      const empAllowances = (emp as any).allowances || [];
+      const allowanceItems = (settingsData.allowances || [])
+        .filter((a: any) => empAllowances.includes(a.name) || empAllowances.includes(String(a.id)))
+        .map((a: any) => ({ name: a.name, amount: a.amount }));
+      const allowanceAmount = allowanceItems.reduce((sum: number, curr: any) => sum + curr.amount, 0);
+
+      // Read live OT from employee's Firestore overtimeRequests field, filtered to the selected period
+      const periodYearMonth = selectedPeriod === "May 2024" ? "2024-05" : selectedPeriod === "April 2024" ? "2024-04" : selectedPeriod.replace(" ", "-").toLowerCase();
+      const empOtRequests = Object.values((emp as any).overtimeRequests || {}).filter(
+        (r: any) => r.status === "Approved" && r.date && r.date.startsWith(periodYearMonth)
+      ) as any[];
+      const otHours = empOtRequests.reduce((sum: number, r: any) => sum + (r.hours || 0), 0);
+      const otAmount = empOtRequests.reduce((sum: number, r: any) => sum + (r.amount || 0), 0);
+
+      const gross = basic + allowanceAmount + otAmount;
+
+      const empDeductions = (emp as any).deductions || [];
+      const deductionItems = (settingsData.deductions || [])
+        .filter((d: any) => empDeductions.includes(d.name) || empDeductions.includes(String(d.id)))
+        .map((d: any) => ({ name: d.name, amount: d.amount }));
+      const deductionAmount = deductionItems.reduce((sum: number, curr: any) => sum + curr.amount, 0);
+
+      const epfEmployee = basic * 0.08;
+      const epfEmployer = basic * 0.12;
+      const etfEmployer = basic * 0.03;
+      const tax = calcTax(gross);
+      const totalDeductions = deductionAmount + epfEmployee + tax;
+      const net = gross - totalDeductions;
+
+      let workDays = 26, presentDays = 26, absentDays = 0, lateDays = 0, halfDays = 0, paidLeave = 0, noPayDays = 0;
+      if (emp.attendanceLogs) {
+        const yearMonth = selectedPeriod === "May 2024" ? "2024-05" : selectedPeriod === "April 2024" ? "2024-04" : "";
+        const logs = Object.entries(emp.attendanceLogs).filter(([date]) => date.startsWith(yearMonth));
+        if (logs.length > 0) {
+          workDays = logs.length;
+          presentDays = logs.filter(([_, log]) => log.status === "Present" || log.status === "Late" || log.status === "Early Leave" || log.status === "Missing Punch").length;
+          absentDays = logs.filter(([_, log]) => log.status === "Absent").length;
+          lateDays = logs.filter(([_, log]) => log.status === "Late").length;
+        }
+      } else {
+        if (emp.id === "EMP001") { presentDays = 24; absentDays = 1; lateDays = 1; paidLeave = 1; }
+        else if (emp.id === "EMP002") { presentDays = 23; absentDays = 2; lateDays = 1; paidLeave = 1; }
+      }
+
+      return {
+        id: emp.id, name: emp.name, dept: emp.department, designation: emp.designation || "",
+        basic, allowances: allowanceAmount, allowanceItems, otHours, otAmount, gross,
+        deductions: totalDeductions, deductionAmount, deductionItems,
+        epf: epfEmployee, etf: etfEmployer, epfEmployer, tax, net, status: "Approved",
+        attendanceSummary: { workDays, presentDays, absentDays, lateDays, halfDays, paidLeave, noPayDays, otHours: otHours > 0 ? `${otHours}h 00m` : "0h" }
+      };
+    });
+  }, [dbEmployees, settingsData, selectedPeriod]);
+
+  const handleGeneratePayroll = async () => {
     setIsCalculating(true);
-    setTimeout(() => {
-      setIsCalculating(false);
-      setPayrollStatus("Approved");
-      setPayrollStep(3);
+    const computedEmployees = liveComputedEmployees;
+    const totals = {
+      totalEmployees: computedEmployees.length,
+      basicCost: computedEmployees.reduce((sum, e) => sum + e.basic, 0),
+      allowancesCost: computedEmployees.reduce((sum, e) => sum + e.allowances, 0),
+      otCost: computedEmployees.reduce((sum, e) => sum + e.otAmount, 0),
+      deductionsCost: computedEmployees.reduce((sum, e) => sum + e.deductions, 0),
+      epfCost: computedEmployees.reduce((sum, e) => sum + e.epf, 0),
+      etfCost: computedEmployees.reduce((sum, e) => sum + e.etf, 0),
+      taxCost: computedEmployees.reduce((sum, e) => sum + e.tax, 0),
+      netCost: computedEmployees.reduce((sum, e) => sum + e.net, 0)
+    };
+    const payrollRun = { period: selectedPeriod, status: "Approved", employees: computedEmployees, totals, updatedAt: new Date().toISOString() };
+    setTimeout(async () => {
+      try {
+        await setDoc(doc(db, "payroll_runs", selectedPeriod), payrollRun);
+      } catch (err) {
+        console.error("Failed to save payroll run:", err);
+      } finally {
+        setIsCalculating(false);
+      }
     }, 1500);
   };
 
-  const handleResetPayroll = () => {
-    setPayrollStatus("Pending");
-    setPayrollStep(2);
+  const handleResetPayroll = async () => {
+    try {
+      await setDoc(doc(db, "payroll_runs", selectedPeriod), {
+        status: "Pending",
+        employees: [],
+        totals: {
+          totalEmployees: 0,
+          basicCost: 0,
+          allowancesCost: 0,
+          otCost: 0,
+          deductionsCost: 0,
+          epfCost: 0,
+          etfCost: 0,
+          taxCost: 0,
+          netCost: 0
+        },
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+    } catch (err) {
+      console.error("Failed to reset payroll run:", err);
+    }
   };
 
-  // Generate department summary metrics
-  const departmentSummaries = [
-    { name: "IT Department", count: 45, basic: 1125000, allowances: 225000, ot: 120450, deductions: 265450, net: 1205000 },
-    { name: "HR Department", count: 32, basic: 640000, allowances: 128000, ot: 65300, deductions: 142200, net: 691100 },
-    { name: "Finance Department", count: 38, basic: 950000, allowances: 180500, ot: 95750, deductions: 205300, net: 1020950 },
-    { name: "Marketing Department", count: 28, basic: 560000, allowances: 112000, ot: 58400, deductions: 132800, net: 597600 },
-    { name: "Operations Department", count: 62, basic: 1850000, allowances: 370000, ot: 175600, deductions: 370000, net: 2025600 },
-    { name: "Sales Department", count: 40, basic: 930000, allowances: 185800, ot: 130250, deductions: 211300, net: 1034750 },
-  ];
+  // Dynamic department summaries — always live from computed employees
+  const departmentSummaries = useMemo(() => {
+    const list = liveComputedEmployees;
+    const deptsMap: Record<string, any> = {};
+    list.forEach((emp: any) => {
+      if (!deptsMap[emp.dept]) {
+        deptsMap[emp.dept] = { name: emp.dept, count: 0, basic: 0, allowances: 0, ot: 0, deductions: 0, net: 0 };
+      }
+      const d = deptsMap[emp.dept];
+      d.count += 1;
+      d.basic += emp.basic;
+      d.allowances += emp.allowances;
+      d.ot += emp.otAmount || 0;
+      d.deductions += emp.deductions;
+      d.net += emp.net;
+    });
+    return Object.values(deptsMap);
+  }, [liveComputedEmployees]);
 
-  // Employee breakdown logs
+  // Dynamic employee breakdown logs — always live
   const employeePayrollPreview = useMemo(() => {
-    const list = [
-      { id: "EMP001", name: "Nimal Perera", dept: "IT Department", basic: 150000, allowances: 25000, ot: 12500, gross: 187500, deductions: 28450, loans: 10000, epf: 16875, etf: 5062.5, tax: 8200, net: 118912.5, status: "Approved" },
-      { id: "EMP002", name: "Kavindi Silva", dept: "HR Department", basic: 120000, allowances: 18000, ot: 8000, gross: 146000, deductions: 22100, loans: 5000, epf: 13140, etf: 3942, tax: 6500, net: 95318, status: "Approved" },
-      { id: "EMP003", name: "Minura Fernando", dept: "Finance Department", basic: 180000, allowances: 30000, ot: 15500, gross: 225500, deductions: 33750, loans: 15000, epf: 20295, etf: 6088.5, tax: 10500, net: 139866.5, status: "Approved" },
-      { id: "EMP004", name: "Tharushi De Silva", dept: "Marketing Department", basic: 110000, allowances: 15000, ot: 6000, gross: 131000, deductions: 19600, loans: 5000, epf: 11790, etf: 3519, tax: 5200, net: 86991, status: "Approved" },
-      { id: "EMP005", name: "Kasun Rajapaksa", dept: "Operations Department", basic: 250000, allowances: 45000, ot: 22000, gross: 317000, deductions: 47550, loans: 20000, epf: 28530, etf: 8559, tax: 18200, net: 194161, status: "Approved" },
-    ];
-
-    return list.filter(item => deptFilter === "All" || item.dept === deptFilter);
-  }, [deptFilter]);
+    return liveComputedEmployees.filter((item: any) => deptFilter === "All" || item.dept === deptFilter);
+  }, [liveComputedEmployees, deptFilter]);
 
   const paginatedDepts = useMemo(() => {
     const startIndex = (deptPage - 1) * itemsPerPage;
@@ -172,6 +325,123 @@ export default function PayrollPage() {
             <Play className={`h-4 w-4 ${isCalculating ? "animate-spin" : ""}`} />
             {isCalculating ? "Calculating salary..." : "Generate Payroll"}
           </button>
+        </div>
+      </div>
+
+      {/* Detailed calculation variables & preview log */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        {/* Employee Preview logs */}
+        <div className="bg-white rounded-2xl border border-card-border shadow-xs lg:col-span-3 overflow-hidden flex flex-col justify-between">
+          <div>
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-slate-800">Employee Payroll Preview</h3>
+                <p className="text-xs text-slate-400">Detailed line item calculation check</p>
+                <p className="text-[10px] text-amber-600 bg-amber-50 border border-amber-100 rounded-md px-2 py-1 mt-1 inline-flex items-center gap-1">
+                  <span>⚑</span> <strong>Statutory</strong> deductions (EPF 8% + Income Tax) are auto-applied by law. <strong>Custom</strong> deductions reflect assignments from the Allowances &amp; Deductions page. Hover any cell for breakdown.
+                </p>
+              </div>
+              <button className="px-3 py-1.5 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-semibold transition-colors bg-white cursor-pointer">
+                <FileSpreadsheet className="h-4 w-4 inline mr-1" /> Export Details
+              </button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-50/75 border-b border-slate-100 text-[10px] font-bold text-slate-400 tracking-wider uppercase">
+                    <th className="py-2.5 px-3">Employee</th>
+                    <th className="py-2.5 px-3 text-right">Basic</th>
+                    <th className="py-2.5 px-3 text-right">Allowances</th>
+                    <th className="py-2.5 px-3 text-right">Overtime</th>
+                    <th className="py-2.5 px-3 text-right">Gross Pay</th>
+                    <th className="py-2.5 px-3 text-right">
+                      <span className="inline-flex flex-col items-end gap-0">
+                        <span>Statutory</span>
+                        <span className="text-[9px] font-normal normal-case text-slate-300">EPF 8% + Tax</span>
+                      </span>
+                    </th>
+                    <th className="py-2.5 px-3 text-right">
+                      <span className="inline-flex flex-col items-end gap-0">
+                        <span>Custom</span>
+                        <span className="text-[9px] font-normal normal-case text-slate-300">Assigned deductions</span>
+                      </span>
+                    </th>
+                    <th className="py-2.5 px-3 text-right">Net Pay</th>
+                    <th className="py-2.5 px-3 text-center">Payslip</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-medium">
+                  {paginatedEmpPreviews.map((emp: any) => {
+                    const statutory = (emp.epf ?? 0) + (emp.tax ?? 0);
+                    const custom = emp.deductionAmount ?? 0;
+                    const statutoryTip = `EPF (8%): LKR ${(emp.epf ?? 0).toLocaleString()}\nIncome Tax: LKR ${(emp.tax ?? 0).toLocaleString()}`;
+                    const customTip = (emp.deductionItems && emp.deductionItems.length > 0)
+                      ? emp.deductionItems.map((d: any) => `${d.name}: LKR ${d.amount.toLocaleString()}`).join('\n')
+                      : 'No custom deductions assigned';
+                    return (
+                      <tr key={emp.id} className="hover:bg-slate-50/20">
+                        <td className="py-3 px-3">
+                          <div className="flex flex-col">
+                            <span className="font-bold text-slate-700">{emp.name}</span>
+                            <span className="text-[9px] text-slate-400">{emp.id}</span>
+                          </div>
+                        </td>
+                        <td className="py-3 px-3 text-right">LKR {(emp.basic ?? 0).toLocaleString()}</td>
+                        <td className="py-3 px-3 text-right text-emerald-600">+LKR {(emp.allowances ?? 0).toLocaleString()}</td>
+                        <td className="py-3 px-3 text-right text-indigo-600">+LKR {(emp.otAmount ?? emp.ot ?? 0).toLocaleString()}</td>
+                        <td className="py-3 px-3 text-right font-bold text-slate-700">LKR {(emp.gross ?? 0).toLocaleString()}</td>
+                        <td className="py-3 px-3 text-right text-rose-600" title={statutoryTip}>
+                          <span className="cursor-help border-b border-dashed border-rose-300">
+                            -{statutory === 0 ? 'LKR 0' : `LKR ${statutory.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 text-right" title={customTip}>
+                          {custom > 0 ? (
+                            <span className="text-orange-600 cursor-help border-b border-dashed border-orange-300">
+                              -LKR {custom.toLocaleString()}
+                            </span>
+                          ) : (
+                            <span className="text-slate-300 text-[10px] cursor-help" title={customTip}>—</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-3 text-right font-bold text-slate-800">LKR {(emp.net ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                        <td className="py-3 px-3 text-center">
+                          <Link href={`/payslips?emp=${emp.id}&period=${encodeURIComponent(selectedPeriod)}`} className="p-1 text-slate-400 hover:text-blue-600 hover:bg-slate-100 rounded inline-block transition-colors" title={`View Payslip – ${emp.name}`}>
+                            <FileText className="h-4 w-4 mx-auto" />
+                          </Link>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {/* Pagination for Employee Payroll Preview */}
+            <div className="p-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold bg-slate-50/50">
+              <span>
+                Showing {employeePayrollPreview.length === 0 ? 0 : (empPayrollPage - 1) * itemsPerPage + 1} to{" "}
+                {Math.min(empPayrollPage * itemsPerPage, employeePayrollPreview.length)} of {employeePayrollPreview.length} entries
+              </span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setEmpPayrollPage(p => Math.max(p - 1, 1))}
+                  disabled={empPayrollPage === 1}
+                  className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  Previous
+                </button>
+                <button className="px-2.5 py-1 bg-blue-600 text-white rounded-md">{empPayrollPage}</button>
+                <button
+                  onClick={() => setEmpPayrollPage(p => p + 1)}
+                  disabled={empPayrollPage * itemsPerPage >= employeePayrollPreview.length}
+                  className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -315,117 +585,6 @@ export default function PayrollPage() {
                   <span className="text-slate-700 font-bold">Paid & Emailed</span>
                   <span className="text-[9px] text-slate-400">Emailed digital payslips to employees</span>
                 </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Detailed calculation variables & preview log */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Calculation Variables */}
-        <div className="bg-white p-5 rounded-2xl border border-card-border shadow-xs flex flex-col justify-between">
-          <div className="space-y-4">
-            <h3 className="text-sm font-bold text-slate-800 border-b border-slate-50 pb-2">
-              Monthly Calculation Summary
-            </h3>
-            <div className="grid grid-cols-2 gap-4 text-xs">
-              <div className="space-y-0.5">
-                <span className="text-slate-400 font-semibold">Total Work Days</span>
-                <p className="font-bold text-slate-700">26 Days</p>
-              </div>
-              <div className="space-y-0.5">
-                <span className="text-slate-400 font-semibold">Present Days</span>
-                <p className="font-bold text-slate-700">20,548 Man-days</p>
-              </div>
-              <div className="space-y-0.5">
-                <span className="text-slate-400 font-semibold">No-Pay Days</span>
-                <p className="font-bold text-slate-700">1,254 Man-days</p>
-              </div>
-              <div className="space-y-0.5">
-                <span className="text-slate-400 font-semibold">Overtime Hours</span>
-                <p className="font-bold text-slate-700">1,875h 30m</p>
-              </div>
-            </div>
-            <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl text-[10px] text-blue-800 font-medium leading-normal">
-              Payroll calculation is processed dynamically using BioStar 2 fingerprint punch logs, approved leaves, manual adjustments, and company tax tables.
-            </div>
-          </div>
-        </div>
-
-        {/* Employee Preview logs */}
-        <div className="bg-white rounded-2xl border border-card-border shadow-xs lg:col-span-2 overflow-hidden flex flex-col justify-between">
-          <div>
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-slate-800">Employee Payroll Preview</h3>
-                <p className="text-xs text-slate-400">Detailed line item calculation check</p>
-              </div>
-              <button className="px-3 py-1.5 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-semibold transition-colors bg-white cursor-pointer">
-                <FileSpreadsheet className="h-4 w-4 inline mr-1" /> Export Details
-              </button>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-slate-50/75 border-b border-slate-100 text-[10px] font-bold text-slate-400 tracking-wider uppercase">
-                    <th className="py-2.5 px-3">Employee</th>
-                    <th className="py-2.5 px-3 text-right">Basic</th>
-                    <th className="py-2.5 px-3 text-right">Allowances</th>
-                    <th className="py-2.5 px-3 text-right">Overtime</th>
-                    <th className="py-2.5 px-3 text-right">Gross Pay</th>
-                    <th className="py-2.5 px-3 text-right">Deductions</th>
-                    <th className="py-2.5 px-3 text-right">Net Pay</th>
-                    <th className="py-2.5 px-3 text-center">Payslip</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 font-medium">
-                  {paginatedEmpPreviews.map((emp) => (
-                    <tr key={emp.id} className="hover:bg-slate-50/20">
-                      <td className="py-3 px-3">
-                        <div className="flex flex-col">
-                          <span className="font-bold text-slate-700">{emp.name}</span>
-                          <span className="text-[9px] text-slate-400">{emp.id}</span>
-                        </div>
-                      </td>
-                      <td className="py-3 px-3 text-right">LKR {emp.basic.toLocaleString()}</td>
-                      <td className="py-3 px-3 text-right text-emerald-600">+LKR {emp.allowances.toLocaleString()}</td>
-                      <td className="py-3 px-3 text-right text-indigo-600">+LKR {emp.ot.toLocaleString()}</td>
-                      <td className="py-3 px-3 text-right font-bold text-slate-700">LKR {emp.gross.toLocaleString()}</td>
-                      <td className="py-3 px-3 text-right text-rose-600">-LKR {emp.deductions.toLocaleString()}</td>
-                      <td className="py-3 px-3 text-right font-bold text-slate-800">LKR {emp.net.toLocaleString()}</td>
-                      <td className="py-3 px-3 text-center">
-                        <Link href="/payslips" className="p-1 text-slate-400 hover:text-blue-600 hover:bg-slate-100 rounded inline-block transition-colors" title="View Payslip">
-                          <FileText className="h-4 w-4 mx-auto" />
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {/* Pagination for Employee Payroll Preview */}
-            <div className="p-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold bg-slate-50/50">
-              <span>
-                Showing {employeePayrollPreview.length === 0 ? 0 : (empPayrollPage - 1) * itemsPerPage + 1} to{" "}
-                {Math.min(empPayrollPage * itemsPerPage, employeePayrollPreview.length)} of {employeePayrollPreview.length} entries
-              </span>
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={() => setEmpPayrollPage(p => Math.max(p - 1, 1))}
-                  disabled={empPayrollPage === 1}
-                  className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
-                >
-                  Previous
-                </button>
-                <button className="px-2.5 py-1 bg-blue-600 text-white rounded-md">{empPayrollPage}</button>
-                <button
-                  onClick={() => setEmpPayrollPage(p => p + 1)}
-                  disabled={empPayrollPage * itemsPerPage >= employeePayrollPreview.length}
-                  className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
-                >
-                  Next
-                </button>
               </div>
             </div>
           </div>
