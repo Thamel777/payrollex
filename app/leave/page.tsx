@@ -33,6 +33,14 @@ export default function LeavePage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
 
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, statusFilter]);
+
   // Form states
   const [formLeaveType, setFormLeaveType] = useState("Annual Leave");
   const [formFromDate, setFormFromDate] = useState("2024-05-21");
@@ -352,6 +360,11 @@ export default function LeavePage() {
     });
   }, [requests, searchTerm, statusFilter]);
 
+  const paginatedRequests = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    return filteredRequests.slice(startIndex, startIndex + itemsPerPage);
+  }, [filteredRequests, currentPage]);
+
   // Chart data
   const balanceData = useMemo(() => {
     const emp = employees.find(e => e.id === activeEmpId);
@@ -474,8 +487,8 @@ export default function LeavePage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs">
-                  {filteredRequests.length > 0 ? (
-                    filteredRequests.map((req) => (
+                  {paginatedRequests.length > 0 ? (
+                    paginatedRequests.map((req) => (
                       <tr key={req.id} className="hover:bg-slate-50/30">
                         <td className="py-3 px-4">
                           <div className="flex flex-col">
@@ -530,11 +543,26 @@ export default function LeavePage() {
             </div>
           </div>
           <div className="p-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold bg-slate-50/50">
-            <span>Showing 1 to {filteredRequests.length} of {filteredRequests.length} logs</span>
+            <span>
+              Showing {filteredRequests.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1} to{" "}
+              {Math.min(currentPage * itemsPerPage, filteredRequests.length)} of {filteredRequests.length} logs
+            </span>
             <div className="flex items-center gap-1.5">
-              <button className="px-2 py-0.5 border border-slate-200 bg-white rounded-md opacity-50 cursor-not-allowed">Prev</button>
-              <button className="px-2.5 py-0.5 bg-blue-600 text-white rounded-md">1</button>
-              <button className="px-2 py-0.5 border border-slate-200 bg-white rounded-md opacity-50 cursor-not-allowed">Next</button>
+              <button
+                onClick={() => setCurrentPage(p => Math.max(p - 1, 1))}
+                disabled={currentPage === 1}
+                className="px-2 py-0.5 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                Prev
+              </button>
+              <button className="px-2.5 py-0.5 bg-blue-600 text-white rounded-md">{currentPage}</button>
+              <button
+                onClick={() => setCurrentPage(p => p + 1)}
+                disabled={currentPage * itemsPerPage >= filteredRequests.length}
+                className="px-2 py-0.5 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                Next
+              </button>
             </div>
           </div>
         </div>

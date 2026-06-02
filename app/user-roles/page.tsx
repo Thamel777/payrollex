@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, Fragment } from "react";
+import { useState, useEffect, Fragment, useMemo } from "react";
 import {
   ShieldAlert,
   UserCheck,
@@ -44,6 +44,9 @@ export default function UserRolesPage() {
   
   const [users, setUsers] = useState(defaultUsersList);
   const [loadingUsers, setLoadingUsers] = useState(true);
+
+  const [usersPage, setUsersPage] = useState(1);
+  const itemsPerPage = 10;
 
   const defaultMatrix = [
     {
@@ -264,6 +267,11 @@ export default function UserRolesPage() {
 
   const chartData = getChartData();
   const totalUsersCount = users.length;
+
+  const paginatedUsers = useMemo(() => {
+    const startIndex = (usersPage - 1) * itemsPerPage;
+    return users.slice(startIndex, startIndex + itemsPerPage);
+  }, [users, usersPage]);
 
   const getPermBadgeStyle = (perm: string) => {
     switch (perm) {
@@ -591,7 +599,7 @@ export default function UserRolesPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {users.map((userItem) => (
+                      {paginatedUsers.map((userItem) => (
                         <tr key={userItem.uid} className="hover:bg-slate-50/20">
                           <td className="py-3 px-4 flex items-center gap-2.5">
                             <div className="w-8 h-8 rounded-full bg-blue-600/10 text-blue-600 flex items-center justify-center font-bold text-xs">
@@ -626,6 +634,30 @@ export default function UserRolesPage() {
                       ))}
                     </tbody>
                   </table>
+                </div>
+                {/* Pagination for Users List */}
+                <div className="p-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold bg-slate-50/50">
+                  <span>
+                    Showing {users.length === 0 ? 0 : (usersPage - 1) * itemsPerPage + 1} to{" "}
+                    {Math.min(usersPage * itemsPerPage, users.length)} of {users.length} entries
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => setUsersPage(p => Math.max(p - 1, 1))}
+                      disabled={usersPage === 1}
+                      className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                    >
+                      Previous
+                    </button>
+                    <button className="px-2.5 py-1 bg-blue-600 text-white rounded-md">{usersPage}</button>
+                    <button
+                      onClick={() => setUsersPage(p => p + 1)}
+                      disabled={usersPage * itemsPerPage >= users.length}
+                      className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                    >
+                      Next
+                    </button>
+                  </div>
                 </div>
               </div>
             )}

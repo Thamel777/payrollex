@@ -54,6 +54,14 @@ export default function EmployeesPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, deptFilter, statusFilter]);
+
   // Add / Edit Modal State
   const [showModal, setShowModal] = useState(false);
   const [modalMode, setModalMode] = useState<"add" | "edit">("add");
@@ -380,6 +388,11 @@ export default function EmployeesPage() {
       return matchesSearch && matchesDept && matchesStatus;
     });
   }, [employees, searchTerm, deptFilter, statusFilter]);
+
+  const paginatedEmployees = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    return filteredEmployees.slice(startIndex, startIndex + itemsPerPage);
+  }, [filteredEmployees, currentPage]);
 
   // Photo upload handler
   const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1127,8 +1140,8 @@ export default function EmployeesPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs">
-                  {filteredEmployees.length > 0 ? (
-                    filteredEmployees.map((emp) => (
+                  {paginatedEmployees.length > 0 ? (
+                    paginatedEmployees.map((emp) => (
                       <tr
                         key={emp.id}
                         onClick={() => setSelectedEmp(emp)}
@@ -1220,11 +1233,26 @@ export default function EmployeesPage() {
           </div>
           {/* Pagination */}
           <div className="p-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold bg-slate-50/50">
-            <span>Showing 1 to {filteredEmployees.length} of {filteredEmployees.length} entries</span>
+            <span>
+              Showing {filteredEmployees.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1} to{" "}
+              {Math.min(currentPage * itemsPerPage, filteredEmployees.length)} of {filteredEmployees.length} entries
+            </span>
             <div className="flex items-center gap-1.5">
-              <button disabled className="px-2.5 py-1 border border-slate-200 bg-white rounded-md opacity-50 cursor-not-allowed">Previous</button>
-              <button className="px-2.5 py-1 bg-blue-600 text-white rounded-md">1</button>
-              <button disabled className="px-2.5 py-1 border border-slate-200 bg-white rounded-md opacity-50 cursor-not-allowed">Next</button>
+              <button
+                onClick={() => setCurrentPage(p => Math.max(p - 1, 1))}
+                disabled={currentPage === 1}
+                className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                Previous
+              </button>
+              <button className="px-2.5 py-1 bg-blue-600 text-white rounded-md">{currentPage}</button>
+              <button
+                onClick={() => setCurrentPage(p => p + 1)}
+                disabled={currentPage * itemsPerPage >= filteredEmployees.length}
+                className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                Next
+              </button>
             </div>
           </div>
         </div>

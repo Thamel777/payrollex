@@ -24,6 +24,11 @@ export default function AllowancesDeductionsPage() {
   const [allowances, setAllowances] = useState(mockAllowances);
   const [deductions, setDeductions] = useState(mockDeductions);
   const [searchTerm, setSearchTerm] = useState("");
+
+  const [allowancePage, setAllowancePage] = useState(1);
+  const [deductionPage, setDeductionPage] = useState(1);
+  const [impactPage, setImpactPage] = useState(1);
+  const itemsPerPage = 10;
   
   // Modals state
   const [showAddAllowance, setShowAddAllowance] = useState(false);
@@ -123,6 +128,21 @@ export default function AllowancesDeductionsPage() {
     { id: "EMP005", name: "Kasun Rajapaksa", dept: "Operations Department", allowance: 70000, deduction: 60000, net: 10000 },
   ];
 
+  const paginatedAllowances = useMemo(() => {
+    const startIndex = (allowancePage - 1) * itemsPerPage;
+    return allowances.slice(startIndex, startIndex + itemsPerPage);
+  }, [allowances, allowancePage]);
+
+  const paginatedDeductions = useMemo(() => {
+    const startIndex = (deductionPage - 1) * itemsPerPage;
+    return deductions.slice(startIndex, startIndex + itemsPerPage);
+  }, [deductions, deductionPage]);
+
+  const paginatedImpact = useMemo(() => {
+    const startIndex = (impactPage - 1) * itemsPerPage;
+    return employeePreview.slice(startIndex, startIndex + itemsPerPage);
+  }, [employeePreview, impactPage]);
+
   return (
     <div className="space-y-6 select-none animate-fade-in">
       {/* Metric Cards Row */}
@@ -182,7 +202,7 @@ export default function AllowancesDeductionsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-medium">
-                  {allowances.map((item) => (
+                  {paginatedAllowances.map((item) => (
                     <tr key={item.id} className="hover:bg-slate-50/30">
                       <td className="py-3 px-4 font-bold text-slate-700">{item.name}</td>
                       <td className="py-3 px-3 text-slate-500 font-medium">{item.description}</td>
@@ -198,6 +218,30 @@ export default function AllowancesDeductionsPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+          {/* Pagination for Allowance Management */}
+          <div className="p-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold bg-slate-50/50">
+            <span>
+              Showing {allowances.length === 0 ? 0 : (allowancePage - 1) * itemsPerPage + 1} to{" "}
+              {Math.min(allowancePage * itemsPerPage, allowances.length)} of {allowances.length} entries
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setAllowancePage(p => Math.max(p - 1, 1))}
+                disabled={allowancePage === 1}
+                className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                Previous
+              </button>
+              <button className="px-2.5 py-1 bg-blue-600 text-white rounded-md">{allowancePage}</button>
+              <button
+                onClick={() => setAllowancePage(p => p + 1)}
+                disabled={allowancePage * itemsPerPage >= allowances.length}
+                className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                Next
+              </button>
             </div>
           </div>
         </div>
@@ -229,7 +273,7 @@ export default function AllowancesDeductionsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-medium">
-                  {deductions.map((item) => (
+                  {paginatedDeductions.map((item) => (
                     <tr key={item.id} className="hover:bg-slate-50/30">
                       <td className="py-3 px-4 font-bold text-slate-700">{item.name}</td>
                       <td className="py-3 px-3 text-slate-500 font-medium">{item.description}</td>
@@ -245,6 +289,30 @@ export default function AllowancesDeductionsPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+          {/* Pagination for Deduction Management */}
+          <div className="p-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold bg-slate-50/50">
+            <span>
+              Showing {deductions.length === 0 ? 0 : (deductionPage - 1) * itemsPerPage + 1} to{" "}
+              {Math.min(deductionPage * itemsPerPage, deductions.length)} of {deductions.length} entries
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setDeductionPage(p => Math.max(p - 1, 1))}
+                disabled={deductionPage === 1}
+                className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                Previous
+              </button>
+              <button className="px-2.5 py-1 bg-blue-600 text-white rounded-md">{deductionPage}</button>
+              <button
+                onClick={() => setDeductionPage(p => p + 1)}
+                disabled={deductionPage * itemsPerPage >= deductions.length}
+                className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                Next
+              </button>
             </div>
           </div>
         </div>
@@ -362,7 +430,7 @@ export default function AllowancesDeductionsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-              {employeePreview.map((item) => (
+              {paginatedImpact.map((item) => (
                 <tr key={item.id} className="hover:bg-slate-50/30">
                   <td className="py-3 px-4 font-bold text-slate-800">{item.id}</td>
                   <td className="py-3 px-4 font-bold text-slate-700">{item.name}</td>
@@ -376,6 +444,30 @@ export default function AllowancesDeductionsPage() {
               ))}
             </tbody>
           </table>
+        </div>
+        {/* Pagination for Impact on Employees Preview */}
+        <div className="p-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold bg-slate-50/50">
+          <span>
+            Showing {employeePreview.length === 0 ? 0 : (impactPage - 1) * itemsPerPage + 1} to{" "}
+            {Math.min(impactPage * itemsPerPage, employeePreview.length)} of {employeePreview.length} entries
+          </span>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setImpactPage(p => Math.max(p - 1, 1))}
+              disabled={impactPage === 1}
+              className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+            >
+              Previous
+            </button>
+            <button className="px-2.5 py-1 bg-blue-600 text-white rounded-md">{impactPage}</button>
+            <button
+              onClick={() => setImpactPage(p => p + 1)}
+              disabled={impactPage * itemsPerPage >= employeePreview.length}
+              className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </div>
 

@@ -29,6 +29,14 @@ export default function ShiftRosterPage() {
   const [dbLoading, setDbLoading] = useState(true);
   const [deptFilter, setDeptFilter] = useState("All");
   const [shiftFilter, setShiftFilter] = useState("All");
+
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [deptFilter, shiftFilter]);
   const [viewMode, setViewMode] = useState("week"); // week, month
   const [showRulesModal, setShowRulesModal] = useState(false);
 
@@ -348,6 +356,11 @@ export default function ShiftRosterPage() {
     });
   }, [employees, deptFilter, shiftFilter]);
 
+  const paginatedRoster = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    return rosterData.slice(startIndex, startIndex + itemsPerPage);
+  }, [rosterData, currentPage]);
+
   const getShiftBadgeStyle = (shiftName: string) => {
     switch (shiftName) {
       case "General Shift":
@@ -609,27 +622,59 @@ export default function ShiftRosterPage() {
         <div className="bg-white rounded-2xl border border-card-border shadow-xs lg:col-span-3 overflow-hidden flex flex-col justify-between">
           <div>
             {/* Calendar Controls / Filters */}
-            <div className="p-5 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div className="flex flex-wrap items-center gap-3 flex-1">
-                {/* Date navigator */}
-                <div className="flex items-center gap-1.5 border border-slate-200 p-1.5 rounded-lg bg-slate-50">
-                  <button className="p-1 hover:bg-white hover:shadow-xs rounded-md text-slate-600 transition-all cursor-pointer">
-                    <ChevronLeft className="h-3.5 w-3.5" />
-                  </button>
-                  <span className="text-xs font-bold text-slate-700 px-1">May 20 – May 26, 2024</span>
-                  <button className="p-1 hover:bg-white hover:shadow-xs rounded-md text-slate-600 transition-all cursor-pointer">
-                    <ChevronRight className="h-3.5 w-3.5" />
+            <div className="p-5 border-b border-slate-100 flex flex-col gap-4">
+              {/* Row 1: Navigation and Actions */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                {/* Left: Date Selector & Today Button */}
+                <div className="flex items-center gap-3">
+                  {/* Date navigator */}
+                  <div className="flex items-center gap-1.5 border border-slate-200 p-1.5 rounded-lg bg-slate-50">
+                    <button className="p-1 hover:bg-white hover:shadow-xs rounded-md text-slate-600 transition-all cursor-pointer">
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                    </button>
+                    <span className="text-xs font-bold text-slate-700 px-1">May 20 – May 26, 2024</span>
+                    <button className="p-1 hover:bg-white hover:shadow-xs rounded-md text-slate-600 transition-all cursor-pointer">
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <button className="px-3 py-1.5 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-bold transition-colors cursor-pointer bg-white">
+                    Today
                   </button>
                 </div>
-                <button className="px-3 py-1.5 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-bold transition-colors cursor-pointer bg-white">
-                  Today
-                </button>
 
-                {/* Filters */}
+                {/* Right: View toggle and Export button */}
+                <div className="flex items-center gap-2.5">
+                  <div className="flex items-center gap-1 border border-slate-200 p-1 rounded-lg bg-slate-50 text-[10px] font-bold text-slate-500">
+                    <button
+                      onClick={() => setViewMode("week")}
+                      className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                        viewMode === "week" ? "bg-white text-slate-800 shadow-xs" : "hover:text-slate-700"
+                      }`}
+                    >
+                      Week View
+                    </button>
+                    <button
+                      onClick={() => setViewMode("month")}
+                      className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                        viewMode === "month" ? "bg-white text-slate-800 shadow-xs" : "hover:text-slate-700"
+                      }`}
+                    >
+                      Month View
+                    </button>
+                  </div>
+                  <button className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-50 flex items-center gap-1.5 transition-colors cursor-pointer bg-white">
+                    <Download className="h-4 w-4" /> Export
+                  </button>
+                </div>
+              </div>
+
+              {/* Row 2: Filter Selectors */}
+              <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-slate-50">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1">Filters:</span>
                 <select
                   value={deptFilter}
                   onChange={(e) => setDeptFilter(e.target.value)}
-                  className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-600 bg-white"
+                  className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-600 bg-white cursor-pointer"
                 >
                   <option value="All">All Departments</option>
                   {departments.filter(d => d !== "All").map(d => (
@@ -640,38 +685,13 @@ export default function ShiftRosterPage() {
                 <select
                   value={shiftFilter}
                   onChange={(e) => setShiftFilter(e.target.value)}
-                  className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-600 bg-white"
+                  className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-600 bg-white cursor-pointer"
                 >
                   <option value="All">All Shifts</option>
                   {(shifts.length > 0 ? shifts : mockShifts).map(s => (
                     <option key={s.id} value={s.name}>{s.name}</option>
                   ))}
                 </select>
-              </div>
-
-              {/* View options */}
-              <div className="flex items-center gap-2 shrink-0">
-                <div className="flex items-center gap-1 border border-slate-200 p-1 rounded-lg bg-slate-50 text-[10px] font-bold text-slate-500">
-                  <button
-                    onClick={() => setViewMode("week")}
-                    className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
-                      viewMode === "week" ? "bg-white text-slate-800 shadow-xs" : "hover:text-slate-700"
-                    }`}
-                  >
-                    Week View
-                  </button>
-                  <button
-                    onClick={() => setViewMode("month")}
-                    className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
-                      viewMode === "month" ? "bg-white text-slate-800 shadow-xs" : "hover:text-slate-700"
-                    }`}
-                  >
-                    Month View
-                  </button>
-                </div>
-                <button className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-50 flex items-center gap-1.5 transition-colors cursor-pointer">
-                  <Download className="h-4 w-4" /> Export
-                </button>
               </div>
             </div>
 
@@ -691,7 +711,7 @@ export default function ShiftRosterPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs">
-                  {rosterData.map((row, index) => (
+                  {paginatedRoster.map((row, index) => (
                     <tr key={row.id || index} className="hover:bg-slate-50/30">
                       <td className="py-3 px-4">
                         <div className="flex flex-col">
@@ -761,7 +781,31 @@ export default function ShiftRosterPage() {
               </table>
             </div>
           </div>
-          <div className="p-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold bg-slate-50/50">
+          {/* Pagination Controls */}
+          <div className="p-4 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs text-slate-500 font-semibold bg-slate-50/50 border-b border-slate-100">
+            <span>
+              Showing {rosterData.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1} to{" "}
+              {Math.min(currentPage * itemsPerPage, rosterData.length)} of {rosterData.length} employees
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setCurrentPage(p => Math.max(p - 1, 1))}
+                disabled={currentPage === 1}
+                className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer text-slate-600 font-bold"
+              >
+                Prev
+              </button>
+              <button className="px-2.5 py-1 bg-blue-600 text-white rounded-md font-bold">{currentPage}</button>
+              <button
+                onClick={() => setCurrentPage(p => p + 1)}
+                disabled={currentPage * itemsPerPage >= rosterData.length}
+                className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer text-slate-600 font-bold"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+          <div className="p-4 flex items-center justify-between text-xs text-slate-500 font-semibold bg-slate-50/50">
             <span>Roster Published: Mon May 20, 2024 at 09:30 AM by Admin</span>
             <button className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-lg transition-all shadow-md shadow-blue-500/10 cursor-pointer">
               Publish Next Week's Roster
