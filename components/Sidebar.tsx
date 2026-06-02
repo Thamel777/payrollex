@@ -86,7 +86,7 @@ export default function Sidebar() {
     <aside
       className={`bg-sidebar-bg text-sidebar-fg flex flex-col transition-all duration-300 select-none border-r border-slate-800 ${
         collapsed ? "w-16" : "w-64"
-      } min-h-screen relative`}
+      } h-screen relative`}
     >
       {/* Floating Collapse Toggle Button */}
       <button
@@ -114,7 +114,7 @@ export default function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <div className={`flex-1 py-4 overflow-y-auto space-y-6 transition-all duration-300 ${collapsed ? "px-2" : "px-3"}`}>
+      <div className={`flex-1 py-4 overflow-y-auto no-scrollbar space-y-6 transition-all duration-300 ${collapsed ? "px-2" : "px-3"}`}>
         {filteredGroups.map((group) => (
           <div key={group.category} className="space-y-1">
             <div className="relative">

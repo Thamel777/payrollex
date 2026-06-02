@@ -64,7 +64,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
   if (!allowed) {
     return (
-      <div className="flex w-full min-h-screen bg-slate-50 overflow-hidden font-sans">
+      <div className="flex w-full h-screen bg-slate-50 overflow-hidden font-sans">
         {/* Sidebar Navigation */}
         <Sidebar />
 
@@ -117,7 +117,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   }
 
   return (
-    <div className="flex w-full min-h-screen bg-slate-50 overflow-hidden font-sans">
+    <div className="flex w-full h-screen bg-slate-50 overflow-hidden font-sans">
       {/* Sidebar Navigation */}
       <Sidebar />
 
