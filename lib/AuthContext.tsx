@@ -171,10 +171,21 @@ const getRoleFromEmail = (email: string | null): string => {
 
 /** Check if an error is an AbortError (request cancelled due to unmount/navigation) */
 const isAbortError = (e: unknown): boolean => {
-  if (e instanceof DOMException && e.name === "AbortError") return true;
-  if (e instanceof Error && e.message === "The user aborted a request.") return true;
-  return false;
+  if (!e) return false;
+  const name = typeof e === "object" && e !== null && "name" in e ? String((e as any).name) : "";
+  const message = typeof e === "object" && e !== null && "message" in e ? String((e as any).message) : "";
+  const errorStr = String(e);
+
+  return (
+    name === "AbortError" ||
+    message === "The user aborted a request." ||
+    message.includes("signal is aborted") ||
+    message.includes("aborted") ||
+    errorStr.includes("AbortError") ||
+    errorStr.includes("aborted")
+  );
 };
+
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
