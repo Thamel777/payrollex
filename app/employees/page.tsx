@@ -20,12 +20,23 @@ import {
   Mail,
   Phone,
   MapPin,
-  Calendar
+  Calendar,
+  AlertTriangle,
+  Upload,
+  CheckCircle2,
+  RefreshCw
 } from "lucide-react";
 import { mockEmployees, Employee } from "@/lib/mockData";
 import { useAuth } from "@/lib/AuthContext";
 import { db } from "@/lib/firebase";
 import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
+
+interface ParsedImportRecord {
+  tempId: string;
+  rowNumber: number;
+  data: Partial<Employee>;
+  validationErrors: string[];
+}
 
 export default function EmployeesPage() {
   const { user, role, employeeId } = useAuth();
@@ -38,7 +49,7 @@ export default function EmployeesPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Modal State
+  // Add / Edit Modal State
   const [showModal, setShowModal] = useState(false);
   const [modalMode, setModalMode] = useState<"add" | "edit">("add");
   const [formEmp, setFormEmp] = useState<Partial<Employee>>({
@@ -63,6 +74,12 @@ export default function EmployeesPage() {
     phone: "",
     emergencyContact: { name: "", relationship: "", phone: "" }
   });
+
+  // Bulk Import Modal State
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importPreviewData, setImportPreviewData] = useState<ParsedImportRecord[]>([]);
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
 
   // Role Gating
   const canAddEdit = role === "Admin" || role === "HR Manager";
@@ -175,7 +192,6 @@ export default function EmployeesPage() {
 
   const handleOpenEdit = (emp: Employee) => {
     setModalMode("edit");
-    // Ensure all optional fields exist in the form state
     setFormEmp({
       ...emp,
       emergencyContact: emp.emergencyContact || { name: "", relationship: "", phone: "" }
@@ -246,6 +262,241 @@ export default function EmployeesPage() {
         console.error("Error deleting employee:", err);
         alert("Failed to delete record: " + (err as Error).message);
       }
+    }
+  };
+
+  // CSV Seeding / Template Download
+  const handleDownloadSampleCSV = () => {
+    const csvContent = 
+      "id,name,nic,dob,gender,maritalStatus,nationality,joinedDate,department,designation,type,status,biostarId,salaryType,basicSalary,epfNumber,etfNumber,bankName,bankAccount,email,phone,address,emergencyName,emergencyRelationship,emergencyPhone\n" +
+      "EMP100,John Doe,199012345678,1990-01-01,Male,Single,Sri Lankan,2026-06-01,IT Department,Senior Engineer,Permanent,Active,1009,Monthly,200000,EPF-100,ETF-100,Commercial Bank,1234567890,john@kawdoco.com,0771234567,\"123, Main Street, Colombo 04\",Jane Doe,Spouse,0779876543\n" +
+      "EMP101,Jane Smith,199298765432,1992-05-10,Female,Married,Sri Lankan,2026-06-01,HR Department,HR Specialist,Contract,Active,1010,Monthly,140000,EPF-101,ETF-101,HNB,9876543210,jane@kawdoco.com,0711112222,\"45, Galle Road, Wattala\",Jack Smith,Spouse,0722223333\n";
+    
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", "payrollex_employee_sample.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Parsing lightweight logic
+  const parseCSVContent = (text: string): Record<string, string>[] => {
+    const lines = text.split(/\r\n|\n/);
+    if (lines.length <= 1) return [];
+
+    const headers = lines[0].split(",").map(h => h.trim().replace(/^"|"$/g, ""));
+    const results: Record<string, string>[] = [];
+
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+
+      const values: string[] = [];
+      let insideQuote = false;
+      let currentValue = "";
+
+      for (let j = 0; j < line.length; j++) {
+        const char = line[j];
+        if (char === '"') {
+          insideQuote = !insideQuote;
+        } else if (char === ',' && !insideQuote) {
+          values.push(currentValue.trim());
+          currentValue = "";
+        } else {
+          currentValue += char;
+        }
+      }
+      values.push(currentValue.trim());
+
+      const row: Record<string, string> = {};
+      headers.forEach((header, index) => {
+        row[header] = values[index]?.replace(/^"|"$/g, "") || "";
+      });
+      results.push(row);
+    }
+    return results;
+  };
+
+  const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setImportError(null);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      if (!text) {
+        setImportError("File content is empty");
+        return;
+      }
+
+      try {
+        const parsedRows = parseCSVContent(text);
+        if (parsedRows.length === 0) {
+          setImportError("No data rows found in CSV file.");
+          return;
+        }
+
+        const validatedRecords: ParsedImportRecord[] = parsedRows.map((row, idx) => {
+          const rowNumber = idx + 2; // header is row 1
+          const validationErrors: string[] = [];
+          
+          const name = row.name || "";
+          const designation = row.designation || "";
+          const department = row.department || "IT Department";
+          const nic = row.nic || "";
+          const email = row.email || "";
+          const phone = row.phone || "";
+          const address = row.address || "";
+          const type = (row.type === "Contract" || row.type === "Probation") ? row.type : "Permanent";
+          const status = (row.status === "Inactive" || row.status === "Terminated") ? row.status : "Active";
+          const gender = (row.gender === "Female" || row.gender === "Other") ? row.gender : "Male";
+          const maritalStatus = row.maritalStatus || "Single";
+          const nationality = row.nationality || "Sri Lankan";
+          const dob = row.dob || "";
+          const joinedDate = row.joinedDate || new Date().toISOString().split("T")[0];
+          const biostarId = row.biostarId || "";
+          const salaryType = row.salaryType || "Monthly";
+          const basicSalary = parseFloat(row.basicSalary) || 0;
+          const epfNumber = row.epfNumber || "";
+          
+          const emergencyName = row.emergencyName || "";
+          const emergencyRelationship = row.emergencyRelationship || "";
+          const emergencyPhone = row.emergencyPhone || "";
+
+          // Required validations
+          if (!name) validationErrors.push("Name is required");
+          if (!designation) validationErrors.push("Designation is required");
+          if (!nic) validationErrors.push("NIC/Passport is required");
+          if (email && !/\S+@\S+\.\S+/.test(email)) validationErrors.push("Invalid email format");
+          
+          // ID check
+          let targetId = row.id || "";
+          if (targetId) {
+            if (employees.some(emp => emp.id === targetId)) {
+              validationErrors.push(`Employee ID ${targetId} already exists in system`);
+            }
+          }
+
+          const employeeData: Partial<Employee> = {
+            id: targetId,
+            name,
+            photo: name ? name.split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase() : "US",
+            department,
+            designation,
+            type: type as any,
+            status: status as any,
+            biostarId,
+            nic,
+            dob,
+            gender,
+            maritalStatus,
+            nationality,
+            joinedDate,
+            salaryType,
+            basicSalary,
+            epfNumber,
+            address,
+            email,
+            phone,
+            emergencyContact: {
+              name: emergencyName,
+              relationship: emergencyRelationship,
+              phone: emergencyPhone
+            },
+            // Custom extended fields
+            etfNumber: row.etfNumber || "",
+            bankName: row.bankName || "Commercial Bank",
+            bankAccount: row.bankAccount || ""
+          } as any;
+
+          return {
+            tempId: `temp-${idx}-${Date.now()}`,
+            rowNumber,
+            data: employeeData,
+            validationErrors
+          };
+        });
+
+        // Determine next ID starting sequence
+        let currentMaxIdNum = 0;
+        if (employees.length > 0) {
+          const numericIds = employees
+            .map(emp => {
+              const match = emp.id.match(/\d+/);
+              return match ? parseInt(match[0]) : 0;
+            })
+            .filter(n => n > 0);
+          if (numericIds.length > 0) {
+            currentMaxIdNum = Math.max(...numericIds);
+          }
+        }
+
+        // Fill in missing auto IDs sequentially
+        let tempNextIdNum = currentMaxIdNum + 1;
+        const finalRecords = validatedRecords.map(record => {
+          if (!record.data.id) {
+            const nextId = `EMP${String(tempNextIdNum).padStart(3, "0")}`;
+            tempNextIdNum++;
+            record.data.id = nextId;
+          }
+          return record;
+        });
+
+        setImportPreviewData(finalRecords);
+      } catch (err) {
+        setImportError("Failed to parse CSV file: " + (err as Error).message);
+      }
+    };
+    reader.onerror = () => {
+      setImportError("Error reading file.");
+    };
+    reader.readAsText(file);
+  };
+
+  const handleConfirmImport = async () => {
+    if (importPreviewData.length === 0) return;
+    
+    // Check if any row has validation errors
+    const validRows = importPreviewData.filter(r => r.validationErrors.length === 0);
+    const invalidRowsCount = importPreviewData.length - validRows.length;
+
+    if (invalidRowsCount > 0) {
+      if (!confirm(`Warning: ${invalidRowsCount} row(s) contain validation errors and will be SKIPPED. Proceed with importing the remaining ${validRows.length} valid employee record(s)?`)) {
+        return;
+      }
+    }
+
+    if (validRows.length === 0) {
+      alert("No valid employee records to import.");
+      return;
+    }
+
+    setImporting(true);
+    setImportError(null);
+
+    try {
+      // Save rows sequentially
+      for (const row of validRows) {
+        const id = row.data.id!;
+        const payload = { ...row.data };
+        // Delete id field from the payload body to avoid redundancy
+        delete payload.id;
+        
+        await setDoc(doc(db, "employees", id), payload);
+      }
+
+      alert(`Successfully registered ${validRows.length} employee profiles!`);
+      setShowImportModal(false);
+      setImportPreviewData([]);
+    } catch (err) {
+      console.error("Bulk write failed:", err);
+      setImportError("Failed to write data: " + (err as Error).message);
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -364,6 +615,14 @@ export default function EmployeesPage() {
                 <button className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-50 flex items-center gap-1.5 transition-colors cursor-pointer">
                   <Download className="h-4 w-4" /> Export
                 </button>
+                {canAddEdit && (
+                  <button
+                    onClick={() => setShowImportModal(true)}
+                    className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-50 flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <FileSpreadsheet className="h-4 w-4 text-emerald-600" /> Import
+                  </button>
+                )}
                 {canAddEdit && (
                   <button
                     onClick={handleOpenAdd}
@@ -1058,6 +1317,233 @@ export default function EmployeesPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk CSV Import Modal */}
+      {showImportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs select-none p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl border border-slate-100 flex flex-col max-h-[90vh]">
+            
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-2xl">
+              <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                <FileSpreadsheet className="h-5 w-5 text-emerald-600" />
+                Bulk Employee Registration (CSV Import)
+              </h3>
+              <button
+                onClick={() => {
+                  setShowImportModal(false);
+                  setImportPreviewData([]);
+                  setImportError(null);
+                }}
+                className="text-slate-400 hover:text-slate-800 p-1 rounded-md hover:bg-slate-100"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              
+              {importPreviewData.length === 0 ? (
+                /* VIEW 1: UPLOAD & INSTRUCTIONS */
+                <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+                  {/* Instructions Menu Column */}
+                  <div className="lg:col-span-2 space-y-4 text-xs">
+                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
+                      <h4 className="font-bold text-slate-800 flex items-center gap-1.5">
+                        <AlertCircle className="h-4 w-4 text-blue-600 shrink-0" />
+                        Import Instructions
+                      </h4>
+                      <ul className="list-decimal pl-4 space-y-1.5 text-slate-600 font-medium leading-relaxed">
+                        <li>Prepare a CSV spreadsheet containing your employee list.</li>
+                        <li>The CSV first line must be the exact header titles list.</li>
+                        <li>
+                          <strong>Required Columns</strong>: <code className="bg-slate-200 px-1 py-0.5 rounded font-mono text-[9px]">name</code>, <code className="bg-slate-200 px-1 py-0.5 rounded font-mono text-[9px]">designation</code>, and <code className="bg-slate-200 px-1 py-0.5 rounded font-mono text-[9px]">nic</code>.
+                        </li>
+                        <li>
+                          <strong>Optional ID Mapping</strong>: If the <code className="bg-slate-200 px-1 py-0.5 rounded font-mono text-[9px]">id</code> column is left blank, the system will auto-generate sequential IDs (e.g. starting at <code className="bg-slate-200 px-1 py-0.5 rounded font-mono text-[9px]">EMP009</code>).
+                        </li>
+                        <li>Verify dates are formatted as <code className="bg-slate-200 px-1 py-0.5 rounded font-mono text-[9px]">YYYY-MM-DD</code>.</li>
+                        <li>Address values containing commas must be enclosed in double quotes.</li>
+                      </ul>
+                    </div>
+
+                    <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 flex flex-col items-center text-center space-y-2.5">
+                      <FileSpreadsheet className="h-8 w-8 text-blue-600" />
+                      <div>
+                        <h5 className="font-bold text-blue-900">Sample CSV Template</h5>
+                        <p className="text-[10px] text-blue-700 mt-0.5 leading-normal max-w-[200px]">
+                          Download our ready-made CSV template with correct headers and test rows.
+                        </p>
+                      </div>
+                      <button
+                        onClick={handleDownloadSampleCSV}
+                        className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-[10px] transition-colors flex items-center gap-1 shadow-md shadow-blue-500/10 cursor-pointer"
+                      >
+                        <Download className="h-3.5 w-3.5" /> Download Template
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Drag and Drop Box */}
+                  <div className="lg:col-span-3 flex flex-col justify-center">
+                    <label className="border-2 border-dashed border-slate-300 hover:border-blue-500 bg-slate-50/50 hover:bg-blue-50/10 rounded-2xl p-10 flex flex-col items-center justify-center gap-4 text-center cursor-pointer transition-all min-h-[16rem]">
+                      <div className="p-4 bg-white rounded-full border border-slate-100 shadow-sm text-slate-400 group-hover:text-blue-500">
+                        <Upload className="h-8 w-8" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-slate-800">Select Employee CSV File</p>
+                        <p className="text-[10px] text-slate-400 mt-1 leading-normal">
+                          Drag & drop a file here or click to browse local files (.csv)
+                        </p>
+                      </div>
+                      <input
+                        type="file"
+                        accept=".csv"
+                        onChange={handleCSVUpload}
+                        className="hidden"
+                      />
+                    </label>
+                    {importError && (
+                      <div className="mt-3 bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-[11px] font-semibold flex items-center gap-1.5">
+                        <AlertTriangle className="h-4 w-4 shrink-0 text-red-500" />
+                        {importError}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                /* VIEW 2: PARSED PREVIEW TABLE */
+                <div className="space-y-4">
+                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+                    <div className="flex items-center gap-2">
+                      <div className="bg-emerald-100 p-1.5 rounded-lg text-emerald-800">
+                        <CheckCircle2 className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <span className="font-bold text-slate-800">File Parsed Successfully</span>
+                        <p className="text-[10px] text-slate-400 leading-none mt-0.5">
+                          Found {importPreviewData.length} records. Please review validations.
+                        </p>
+                      </div>
+                    </div>
+                    
+                    <button
+                      onClick={() => setImportPreviewData([])}
+                      className="px-3 py-1.5 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-600 hover:text-slate-800 bg-white hover:bg-slate-50 flex items-center gap-1 transition-colors cursor-pointer"
+                    >
+                      <RefreshCw className="h-3 w-3" /> Upload Another File
+                    </button>
+                  </div>
+
+                  {importError && (
+                    <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-[11px] font-semibold flex items-center gap-1.5">
+                      <AlertTriangle className="h-4 w-4 shrink-0 text-red-500" />
+                      {importError}
+                    </div>
+                  )}
+
+                  {/* Scrollable Preview Table */}
+                  <div className="border border-slate-100 rounded-xl overflow-hidden shadow-inner max-h-[45vh] overflow-y-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-100 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          <th className="py-2.5 px-3.5 text-center">Row</th>
+                          <th className="py-2.5 px-3.5">ID</th>
+                          <th className="py-2.5 px-3.5">Full Name</th>
+                          <th className="py-2.5 px-3.5">Department</th>
+                          <th className="py-2.5 px-3.5">Designation</th>
+                          <th className="py-2.5 px-3.5">Basic Salary</th>
+                          <th className="py-2.5 px-3.5">Email</th>
+                          <th className="py-2.5 px-3.5">Validation Warnings</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 bg-white">
+                        {importPreviewData.map((record) => (
+                          <tr key={record.tempId} className={record.validationErrors.length > 0 ? "bg-red-50/30" : "hover:bg-slate-50/50"}>
+                            <td className="py-2.5 px-3.5 text-center font-bold text-slate-400">{record.rowNumber}</td>
+                            <td className="py-2.5 px-3.5 font-bold text-blue-600">{record.data.id}</td>
+                            <td className="py-2.5 px-3.5 font-bold text-slate-700">{record.data.name || <span className="text-red-500 italic">Missing</span>}</td>
+                            <td className="py-2.5 px-3.5 text-slate-500 font-semibold">{record.data.department}</td>
+                            <td className="py-2.5 px-3.5 text-slate-500 font-semibold">{record.data.designation || <span className="text-red-500 italic">Missing</span>}</td>
+                            <td className="py-2.5 px-3.5 font-mono text-slate-600 font-bold">LKR {record.data.basicSalary ? record.data.basicSalary.toLocaleString() : "0.00"}</td>
+                            <td className="py-2.5 px-3.5 text-slate-500 font-medium">{record.data.email || <span className="text-slate-300 italic">N/A</span>}</td>
+                            <td className="py-2.5 px-3.5">
+                              {record.validationErrors.length > 0 ? (
+                                <div className="space-y-0.5">
+                                  {record.validationErrors.map((err, errIdx) => (
+                                    <span key={errIdx} className="inline-flex items-center gap-0.5 bg-red-100 text-red-800 text-[9px] font-bold px-1.5 py-0.5 rounded-full">
+                                      <AlertTriangle className="h-2.5 w-2.5 shrink-0" />
+                                      {err}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="inline-flex items-center gap-0.5 bg-emerald-100 text-emerald-800 text-[9px] font-bold px-1.5 py-0.5 rounded-full">
+                                  Valid Row
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+            </div>
+
+            {/* Modal Actions Footer */}
+            <div className="px-6 py-4 border-t border-slate-100 flex justify-between items-center bg-slate-50 rounded-b-2xl shrink-0 text-xs">
+              <span className="text-slate-400 font-semibold">
+                {importPreviewData.length > 0 && (
+                  <>
+                    Valid Records:{" "}
+                    <span className="text-emerald-600 font-bold">
+                      {importPreviewData.filter(r => r.validationErrors.length === 0).length}
+                    </span>{" "}
+                    / {importPreviewData.length}
+                  </>
+                )}
+              </span>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowImportModal(false);
+                    setImportPreviewData([]);
+                    setImportError(null);
+                  }}
+                  className="px-4 py-2 border border-slate-200 rounded-lg font-semibold text-slate-500 hover:text-slate-800 hover:bg-slate-100 bg-white transition-colors"
+                >
+                  Cancel
+                </button>
+                {importPreviewData.length > 0 && (
+                  <button
+                    onClick={handleConfirmImport}
+                    disabled={importing}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg transition-all shadow-md shadow-emerald-500/10 flex items-center gap-1.5"
+                  >
+                    {importing ? (
+                      <>
+                        <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        Saving Records...
+                      </>
+                    ) : (
+                      <>
+                        Save Valid Employee Profiles
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
+
           </div>
         </div>
       )}
