@@ -14,27 +14,35 @@ export default function AbortErrorSuppressor() {
   useEffect(() => {
     const handler = (event: PromiseRejectionEvent) => {
       const error = event.reason;
+      if (!error) return;
 
-      // Suppress DOMException AbortError
-      if (error instanceof DOMException && error.name === "AbortError") {
-        event.preventDefault();
-        return;
-      }
+      const name = typeof error === "object" && error !== null && "name" in error ? String((error as any).name) : "";
+      const message = typeof error === "object" && error !== null && "message" in error ? String((error as any).message) : "";
+      const errorStr = String(error);
 
-      // Suppress generic "user aborted" error messages
-      if (
-        error instanceof Error &&
-        (error.message === "The user aborted a request." ||
-          error.message.includes("signal is aborted") ||
-          error.message.includes("aborted"))
-      ) {
-        event.preventDefault();
-        return;
+      // Check if it is an AbortError or cancelled request
+      const isAbort =
+        name === "AbortError" ||
+        message === "The user aborted a request." ||
+        message.includes("signal is aborted") ||
+        message.includes("aborted") ||
+        errorStr.includes("AbortError") ||
+        errorStr.includes("aborted");
+
+      if (isAbort) {
+        try {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          event.stopPropagation();
+        } catch (e) {
+          // Ignore if event methods aren't available
+        }
       }
     };
 
-    window.addEventListener("unhandledrejection", handler);
-    return () => window.removeEventListener("unhandledrejection", handler);
+    // Register in the capturing phase (useCapture = true) to run before Turbopack dev clients
+    window.addEventListener("unhandledrejection", handler, true);
+    return () => window.removeEventListener("unhandledrejection", handler, true);
   }, []);
 
   return null;

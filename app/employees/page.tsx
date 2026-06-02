@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import {
   Users,
   Building,
@@ -24,7 +24,9 @@ import {
   AlertTriangle,
   Upload,
   CheckCircle2,
-  RefreshCw
+  RefreshCw,
+  Camera,
+  ImageIcon
 } from "lucide-react";
 import { mockEmployees, Employee } from "@/lib/mockData";
 import { useAuth } from "@/lib/AuthContext";
@@ -75,11 +77,58 @@ export default function EmployeesPage() {
     emergencyContact: { name: "", relationship: "", phone: "" }
   });
 
+  // Photo Upload State
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+
   // Bulk Import Modal State
   const [showImportModal, setShowImportModal] = useState(false);
   const [importPreviewData, setImportPreviewData] = useState<ParsedImportRecord[]>([]);
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+
+  // Custom Confirmation Modal State
+  const [confirmModal, setConfirmModal] = useState<{
+    show: boolean;
+    title: string;
+    message: string;
+    confirmText: string;
+    cancelText: string;
+    onConfirm: () => void | Promise<void>;
+    type: "warning" | "info" | "danger";
+  }>({
+    show: false,
+    title: "",
+    message: "",
+    confirmText: "Confirm",
+    cancelText: "Cancel",
+    onConfirm: () => {},
+    type: "info"
+  });
+
+  const showConfirm = (
+    title: string,
+    message: string,
+    onConfirm: () => void | Promise<void>,
+    type: "warning" | "info" | "danger" = "info",
+    confirmText: string = "Confirm",
+    cancelText: string = "Cancel"
+  ) => {
+    setConfirmModal({
+      show: true,
+      title,
+      message,
+      confirmText,
+      cancelText,
+      onConfirm: async () => {
+        await onConfirm();
+        setConfirmModal(prev => ({ ...prev, show: false }));
+      },
+      type
+    });
+  };
 
   // Role Gating
   const canAddEdit = role === "Admin" || role === "HR Manager";
@@ -163,8 +212,90 @@ export default function EmployeesPage() {
     });
   }, [employees, searchTerm, deptFilter, statusFilter]);
 
+  // Photo upload handler
+  const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    if (!file.type.startsWith("image/")) {
+      alert("Please select a valid image file (JPG, PNG, WEBP)");
+      return;
+    }
+
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      alert("Image file size must be under 5MB");
+      return;
+    }
+
+    setPhotoFile(file);
+
+    // Generate preview
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setPhotoPreview(event.target?.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemovePhoto = () => {
+    setPhotoFile(null);
+    setPhotoPreview(null);
+    setFormEmp(prev => ({ ...prev, photoUrl: "" }));
+    if (photoInputRef.current) {
+      photoInputRef.current.value = "";
+    }
+  };
+
+  // Compress image to a small base64 data URL using canvas
+  const compressImageToBase64 = (file: File, maxSize = 200, quality = 0.7): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const reader = new FileReader();
+
+      reader.onload = (e) => {
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          let width = img.width;
+          let height = img.height;
+
+          // Scale down to maxSize keeping aspect ratio
+          if (width > height) {
+            if (width > maxSize) {
+              height = Math.round((height * maxSize) / width);
+              width = maxSize;
+            }
+          } else {
+            if (height > maxSize) {
+              width = Math.round((width * maxSize) / height);
+              height = maxSize;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            reject(new Error("Canvas context not available"));
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          const dataUrl = canvas.toDataURL("image/jpeg", quality);
+          resolve(dataUrl);
+        };
+        img.onerror = () => reject(new Error("Failed to load image"));
+        img.src = e.target?.result as string;
+      };
+      reader.onerror = () => reject(new Error("Failed to read file"));
+      reader.readAsDataURL(file);
+    });
+  };
+
   const handleOpenAdd = () => {
     setModalMode("add");
+    setPhotoFile(null);
+    setPhotoPreview(null);
     setFormEmp({
       id: "",
       name: "",
@@ -192,6 +323,8 @@ export default function EmployeesPage() {
 
   const handleOpenEdit = (emp: Employee) => {
     setModalMode("edit");
+    setPhotoFile(null);
+    setPhotoPreview(emp.photoUrl || null);
     setFormEmp({
       ...emp,
       emergencyContact: emp.emergencyContact || { name: "", relationship: "", phone: "" }
@@ -201,58 +334,107 @@ export default function EmployeesPage() {
 
   const handleSubmitForm = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formEmp.name || !formEmp.designation) {
+    const name = formEmp.name;
+    const designation = formEmp.designation;
+    if (!name || !designation) {
       alert("Please fill out name and designation");
       return;
     }
 
-    try {
-      if (modalMode === "add") {
-        // Generate automatic employee ID prefixing EMP followed by 3 digits
-        let nextIdNum = 1;
-        if (employees.length > 0) {
-          const numericIds = employees
-            .map(emp => {
-              const match = emp.id.match(/\d+/);
-              return match ? parseInt(match[0]) : 0;
-            })
-            .filter(n => n > 0);
-          if (numericIds.length > 0) {
-            nextIdNum = Math.max(...numericIds) + 1;
+    const saveRecord = async () => {
+      try {
+        if (modalMode === "add") {
+          // Generate automatic employee ID prefixing EMP followed by 3 digits
+          let nextIdNum = 1;
+          if (employees.length > 0) {
+            const numericIds = employees
+              .map(emp => {
+                const match = emp.id.match(/\d+/);
+                return match ? parseInt(match[0]) : 0;
+              })
+              .filter(n => n > 0);
+            if (numericIds.length > 0) {
+              nextIdNum = Math.max(...numericIds) + 1;
+            }
           }
+          const newId = `EMP${String(nextIdNum).padStart(3, "0")}`;
+          const photoInitials = name.split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase();
+
+          // Compress and encode photo if selected
+          let photoUrl: string | undefined;
+          if (photoFile) {
+            setUploadingPhoto(true);
+            try {
+              photoUrl = await compressImageToBase64(photoFile);
+            } catch (err) {
+              console.error("Failed to compress photo:", err);
+            } finally {
+              setUploadingPhoto(false);
+            }
+          }
+
+          const freshEmployee: Employee = {
+            ...(formEmp as Employee),
+            id: newId,
+            photo: photoInitials,
+            ...(photoUrl ? { photoUrl } : {}),
+            name,
+            designation,
+            basicSalary: Number(formEmp.basicSalary) || 0
+          };
+
+          await setDoc(doc(db, "employees", newId), freshEmployee);
+          setSelectedEmp(freshEmployee);
+        } else {
+          const id = formEmp.id!;
+
+          // Compress and encode photo if a new file was selected
+          let photoUrl: string | undefined;
+          if (photoFile) {
+            setUploadingPhoto(true);
+            try {
+              photoUrl = await compressImageToBase64(photoFile);
+            } catch (err) {
+              console.error("Failed to compress photo:", err);
+            } finally {
+              setUploadingPhoto(false);
+            }
+          }
+
+          const updatedData: Record<string, any> = {
+            ...formEmp,
+            name,
+            designation,
+            basicSalary: Number(formEmp.basicSalary) || 0,
+            ...(photoUrl ? { photoUrl } : {})
+          };
+          // Remove document id before writing to payload
+          delete updatedData.id;
+
+          await updateDoc(doc(db, "employees", id), updatedData);
         }
-        const newId = `EMP${String(nextIdNum).padStart(3, "0")}`;
-        const photoInitials = formEmp.name.split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase();
-
-        const freshEmployee: Employee = {
-          ...(formEmp as Employee),
-          id: newId,
-          photo: photoInitials,
-          basicSalary: Number(formEmp.basicSalary) || 0
-        };
-
-        await setDoc(doc(db, "employees", newId), freshEmployee);
-        setSelectedEmp(freshEmployee);
-      } else {
-        const id = formEmp.id!;
-        const updatedData = {
-          ...formEmp,
-          basicSalary: Number(formEmp.basicSalary) || 0
-        };
-        // Remove document id before writing to payload
-        delete updatedData.id;
-
-        await updateDoc(doc(db, "employees", id), updatedData);
+        setPhotoFile(null);
+        setPhotoPreview(null);
+        setShowModal(false);
+      } catch (err) {
+        console.error("Error saving employee record:", err);
+        alert("Error saving record: " + (err as Error).message);
       }
-      setShowModal(false);
-    } catch (err) {
-      console.error("Error saving employee record:", err);
-      alert("Error saving record: " + (err as Error).message);
-    }
+    };
+
+    showConfirm(
+      modalMode === "add" ? "Create Employee Profile" : "Save Profile Changes",
+      modalMode === "add"
+        ? `Are you sure you want to create a new employee profile for "${name}"?`
+        : `Are you sure you want to save the updated details for employee "${name}" (ID: ${formEmp.id})?`,
+      saveRecord,
+      "warning",
+      modalMode === "add" ? "Create Profile" : "Save Changes"
+    );
   };
 
   const handleDeleteEmployee = async (id: string) => {
-    if (confirm(`Are you sure you want to delete employee ${id}?`)) {
+    const deleteRecord = async () => {
       try {
         await deleteDoc(doc(db, "employees", id));
         if (selectedEmp?.id === id) {
@@ -262,7 +444,15 @@ export default function EmployeesPage() {
         console.error("Error deleting employee:", err);
         alert("Failed to delete record: " + (err as Error).message);
       }
-    }
+    };
+
+    showConfirm(
+      "Delete Employee Profile",
+      `Are you sure you want to permanently delete employee profile "${id}"? This action cannot be undone.`,
+      deleteRecord,
+      "danger",
+      "Delete Profile"
+    );
   };
 
   // Export all employees to CSV
@@ -506,39 +696,53 @@ export default function EmployeesPage() {
     const validRows = importPreviewData.filter(r => r.validationErrors.length === 0);
     const invalidRowsCount = importPreviewData.length - validRows.length;
 
-    if (invalidRowsCount > 0) {
-      if (!confirm(`Warning: ${invalidRowsCount} row(s) contain validation errors and will be SKIPPED. Proceed with importing the remaining ${validRows.length} valid employee record(s)?`)) {
-        return;
-      }
-    }
-
     if (validRows.length === 0) {
       alert("No valid employee records to import.");
       return;
     }
 
-    setImporting(true);
-    setImportError(null);
+    const proceedWithImport = async () => {
+      setImporting(true);
+      setImportError(null);
 
-    try {
-      // Save rows sequentially
-      for (const row of validRows) {
-        const id = row.data.id!;
-        const payload = { ...row.data };
-        // Delete id field from the payload body to avoid redundancy
-        delete payload.id;
-        
-        await setDoc(doc(db, "employees", id), payload);
+      try {
+        // Save rows sequentially
+        for (const row of validRows) {
+          const id = row.data.id!;
+          const payload = { ...row.data };
+          // Delete id field from the payload body to avoid redundancy
+          delete payload.id;
+          
+          await setDoc(doc(db, "employees", id), payload);
+        }
+
+        alert(`Successfully registered ${validRows.length} employee profiles!`);
+        setShowImportModal(false);
+        setImportPreviewData([]);
+      } catch (err) {
+        console.error("Bulk write failed:", err);
+        setImportError("Failed to write data: " + (err as Error).message);
+      } finally {
+        setImporting(false);
       }
+    };
 
-      alert(`Successfully registered ${validRows.length} employee profiles!`);
-      setShowImportModal(false);
-      setImportPreviewData([]);
-    } catch (err) {
-      console.error("Bulk write failed:", err);
-      setImportError("Failed to write data: " + (err as Error).message);
-    } finally {
-      setImporting(false);
+    if (invalidRowsCount > 0) {
+      showConfirm(
+        "Import Valid Records",
+        `Warning: ${invalidRowsCount} row(s) contain validation errors and will be SKIPPED. Do you want to proceed with importing the remaining ${validRows.length} valid employee record(s)?`,
+        proceedWithImport,
+        "warning",
+        "Import Valid Records"
+      );
+    } else {
+      showConfirm(
+        "Confirm Bulk Import",
+        `Are you sure you want to register all ${validRows.length} employee profiles from the uploaded CSV?`,
+        proceedWithImport,
+        "info",
+        "Start Import"
+      );
     }
   };
 
@@ -718,9 +922,17 @@ export default function EmployeesPage() {
                         <td className="py-3 px-2.5 font-bold text-slate-800 whitespace-nowrap">{emp.id}</td>
                         <td className="py-3 px-2.5">
                           <div className="flex items-center gap-2">
-                            <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 font-bold text-[10px] shrink-0 border border-slate-200">
-                              {emp.photo}
-                            </div>
+                            {emp.photoUrl ? (
+                              <img
+                                src={emp.photoUrl}
+                                alt={emp.name}
+                                className="w-8 h-8 rounded-full object-cover shrink-0 border border-slate-200"
+                              />
+                            ) : (
+                              <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 font-bold text-[10px] shrink-0 border border-slate-200">
+                                {emp.photo}
+                              </div>
+                            )}
                             <span className="font-bold text-slate-700 hover:text-blue-600 whitespace-nowrap">{emp.name}</span>
                           </div>
                         </td>
@@ -808,9 +1020,17 @@ export default function EmployeesPage() {
               <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 p-6 text-white relative">
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-4">
-                    <div className="w-14 h-14 rounded-full bg-white/10 flex items-center justify-center font-bold text-lg text-white border border-white/20">
-                      {selectedEmp.photo}
-                    </div>
+                    {selectedEmp.photoUrl ? (
+                      <img
+                        src={selectedEmp.photoUrl}
+                        alt={selectedEmp.name}
+                        className="w-14 h-14 rounded-full object-cover border-2 border-white/20 shadow-lg"
+                      />
+                    ) : (
+                      <div className="w-14 h-14 rounded-full bg-white/10 flex items-center justify-center font-bold text-lg text-white border border-white/20">
+                        {selectedEmp.photo}
+                      </div>
+                    )}
                     <div className="space-y-0.5">
                       <h3 className="text-base font-bold tracking-tight">{selectedEmp.name}</h3>
                       <p className="text-xs text-slate-300 font-medium">{selectedEmp.designation}</p>
@@ -1035,6 +1255,67 @@ export default function EmployeesPage() {
             </div>
             <form onSubmit={handleSubmitForm} className="flex-1 overflow-y-auto p-6 space-y-6">
               
+              {/* Profile Photo Upload */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-extrabold text-blue-600 uppercase tracking-wider border-b border-slate-100 pb-1">Profile Photo</h4>
+                <div className="flex items-center gap-5">
+                  {/* Avatar Preview */}
+                  <div className="relative group">
+                    {photoPreview ? (
+                      <img
+                        src={photoPreview}
+                        alt="Preview"
+                        className="w-20 h-20 rounded-full object-cover border-2 border-slate-200 shadow-md"
+                      />
+                    ) : (
+                      <div className="w-20 h-20 rounded-full bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center border-2 border-dashed border-slate-300">
+                        <ImageIcon className="h-8 w-8 text-slate-400" />
+                      </div>
+                    )}
+                    {/* Camera overlay on hover */}
+                    <button
+                      type="button"
+                      onClick={() => photoInputRef.current?.click()}
+                      className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity cursor-pointer"
+                    >
+                      <Camera className="h-5 w-5 text-white" />
+                    </button>
+                  </div>
+
+                  {/* Upload controls */}
+                  <div className="flex flex-col gap-2">
+                    <input
+                      ref={photoInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      onChange={handlePhotoSelect}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => photoInputRef.current?.click()}
+                      className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 hover:text-blue-600 hover:border-blue-300 hover:bg-blue-50/50 flex items-center gap-1.5 transition-all cursor-pointer"
+                    >
+                      <Upload className="h-3.5 w-3.5" />
+                      {photoPreview ? "Change Photo" : "Upload Photo"}
+                    </button>
+                    {photoPreview && (
+                      <button
+                        type="button"
+                        onClick={handleRemovePhoto}
+                        className="px-3 py-1.5 border border-rose-200 rounded-lg text-xs font-bold text-rose-500 hover:text-rose-700 hover:bg-rose-50 flex items-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Remove
+                      </button>
+                    )}
+                    <p className="text-[9px] text-slate-400 font-semibold leading-normal">
+                      JPG, PNG or WEBP · Max 5MB
+                    </p>
+                  </div>
+                </div>
+              </div>
+
               {/* SECTION 1: Personal Details */}
               <div className="space-y-3">
                 <h4 className="text-xs font-extrabold text-blue-600 uppercase tracking-wider border-b border-slate-100 pb-1">1. Personal Info</h4>
@@ -1355,9 +1636,17 @@ export default function EmployeesPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-lg transition-all shadow-md shadow-blue-500/10"
+                  disabled={uploadingPhoto}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-lg transition-all shadow-md shadow-blue-500/10 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-1.5"
                 >
-                  {modalMode === "add" ? "Save Employee" : "Save Changes"}
+                  {uploadingPhoto ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      Uploading Photo...
+                    </>
+                  ) : (
+                    modalMode === "add" ? "Save Employee" : "Save Changes"
+                  )}
                 </button>
               </div>
             </form>
@@ -1588,6 +1877,62 @@ export default function EmployeesPage() {
               </div>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* Custom Confirmation Modal */}
+      {confirmModal.show && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-xs select-none p-4 animate-fade-in">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl border border-slate-100 p-6 space-y-4">
+            <div className="flex items-start gap-4">
+              <div className={`p-3 rounded-full shrink-0 ${
+                confirmModal.type === "danger" 
+                  ? "bg-rose-50 text-rose-600 border border-rose-100" 
+                  : confirmModal.type === "warning"
+                  ? "bg-amber-50 text-amber-600 border border-amber-100"
+                  : "bg-blue-50 text-blue-600 border border-blue-100"
+              }`}>
+                {confirmModal.type === "danger" ? (
+                  <AlertTriangle className="h-6 w-6" />
+                ) : confirmModal.type === "warning" ? (
+                  <AlertCircle className="h-6 w-6" />
+                ) : (
+                  <Users className="h-6 w-6" />
+                )}
+              </div>
+              <div className="space-y-1">
+                <h3 className="font-bold text-slate-800 text-sm leading-normal">
+                  {confirmModal.title}
+                </h3>
+                <p className="text-xs text-slate-500 font-semibold leading-normal">
+                  {confirmModal.message}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+                className="px-4 py-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                {confirmModal.cancelText}
+              </button>
+              <button
+                type="button"
+                onClick={confirmModal.onConfirm}
+                className={`px-4 py-2 text-white font-bold text-xs rounded-lg transition-all shadow-md cursor-pointer ${
+                  confirmModal.type === "danger"
+                    ? "bg-rose-600 hover:bg-rose-700 shadow-rose-500/10"
+                    : confirmModal.type === "warning"
+                    ? "bg-amber-600 hover:bg-amber-700 shadow-amber-500/10"
+                    : "bg-blue-600 hover:bg-blue-700 shadow-blue-500/10"
+                }`}
+              >
+                {confirmModal.confirmText}
+              </button>
+            </div>
           </div>
         </div>
       )}
