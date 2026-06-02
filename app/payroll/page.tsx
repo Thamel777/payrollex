@@ -24,6 +24,14 @@ export default function PayrollPage() {
   const [isCalculating, setIsCalculating] = useState(false);
   const [payrollStep, setPayrollStep] = useState(2); // 1 = Draft, 2 = Pending, 3 = Approved, 4 = Paid
 
+  const [deptPage, setDeptPage] = useState(1);
+  const [empPayrollPage, setEmpPayrollPage] = useState(1);
+  const itemsPerPage = 10;
+
+  useEffect(() => {
+    setEmpPayrollPage(1);
+  }, [deptFilter]);
+
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -64,6 +72,16 @@ export default function PayrollPage() {
 
     return list.filter(item => deptFilter === "All" || item.dept === deptFilter);
   }, [deptFilter]);
+
+  const paginatedDepts = useMemo(() => {
+    const startIndex = (deptPage - 1) * itemsPerPage;
+    return departmentSummaries.slice(startIndex, startIndex + itemsPerPage);
+  }, [deptPage]);
+
+  const paginatedEmpPreviews = useMemo(() => {
+    const startIndex = (empPayrollPage - 1) * itemsPerPage;
+    return employeePayrollPreview.slice(startIndex, startIndex + itemsPerPage);
+  }, [employeePayrollPreview, empPayrollPage]);
 
   // Donut chart breakdown data
   const pieData = [
@@ -184,7 +202,7 @@ export default function PayrollPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                {departmentSummaries.map((dept, index) => (
+                {paginatedDepts.map((dept, index) => (
                   <tr key={index} className="hover:bg-slate-50/30">
                     <td className="py-2.5 px-4 font-bold text-slate-800">{dept.name}</td>
                     <td className="py-2.5 px-3 text-center font-bold text-slate-600">{dept.count}</td>
@@ -197,6 +215,30 @@ export default function PayrollPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+          {/* Pagination for Department Summaries */}
+          <div className="p-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold bg-slate-50/50">
+            <span>
+              Showing {departmentSummaries.length === 0 ? 0 : (deptPage - 1) * itemsPerPage + 1} to{" "}
+              {Math.min(deptPage * itemsPerPage, departmentSummaries.length)} of {departmentSummaries.length} entries
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setDeptPage(p => Math.max(p - 1, 1))}
+                disabled={deptPage === 1}
+                className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                Previous
+              </button>
+              <button className="px-2.5 py-1 bg-blue-600 text-white rounded-md">{deptPage}</button>
+              <button
+                onClick={() => setDeptPage(p => p + 1)}
+                disabled={deptPage * itemsPerPage >= departmentSummaries.length}
+                className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                Next
+              </button>
+            </div>
           </div>
         </div>
 
@@ -338,7 +380,7 @@ export default function PayrollPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-medium">
-                  {employeePayrollPreview.map((emp) => (
+                  {paginatedEmpPreviews.map((emp) => (
                     <tr key={emp.id} className="hover:bg-slate-50/20">
                       <td className="py-3 px-3">
                         <div className="flex flex-col">
@@ -361,6 +403,30 @@ export default function PayrollPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+            {/* Pagination for Employee Payroll Preview */}
+            <div className="p-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold bg-slate-50/50">
+              <span>
+                Showing {employeePayrollPreview.length === 0 ? 0 : (empPayrollPage - 1) * itemsPerPage + 1} to{" "}
+                {Math.min(empPayrollPage * itemsPerPage, employeePayrollPreview.length)} of {employeePayrollPreview.length} entries
+              </span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setEmpPayrollPage(p => Math.max(p - 1, 1))}
+                  disabled={empPayrollPage === 1}
+                  className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  Previous
+                </button>
+                <button className="px-2.5 py-1 bg-blue-600 text-white rounded-md">{empPayrollPage}</button>
+                <button
+                  onClick={() => setEmpPayrollPage(p => p + 1)}
+                  disabled={empPayrollPage * itemsPerPage >= employeePayrollPreview.length}
+                  className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  Next
+                </button>
+              </div>
             </div>
           </div>
         </div>

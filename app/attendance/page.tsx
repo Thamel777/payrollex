@@ -46,6 +46,7 @@ import {
 } from "recharts";
 import { mockAttendance, Employee, CorrectionRequest } from "@/lib/mockData";
 import { useAuth } from "@/lib/AuthContext";
+import Portal from "@/components/Portal";
 import { db } from "@/lib/firebase";
 import {
   collection,
@@ -85,6 +86,15 @@ export default function AttendancePage() {
   const [selectedDate, setSelectedDate] = useState<string>(() => {
     return new Date().toISOString().split("T")[0]; // YYYY-MM-DD
   });
+
+  // Pagination States
+  const [attendancePage, setAttendancePage] = useState(1);
+  const [correctionsPage, setCorrectionsPage] = useState(1);
+  const itemsPerPage = 10;
+
+  useEffect(() => {
+    setAttendancePage(1);
+  }, [searchTerm, deptFilter, statusFilter, selectedDate]);
 
   // Comprehensive View State
   const [selectedEmp, setSelectedEmp] = useState<Employee | null>(null);
@@ -848,6 +858,16 @@ export default function AttendancePage() {
     });
   }, [dailyLogs, searchTerm, deptFilter, statusFilter]);
 
+  const paginatedRecords = useMemo(() => {
+    const startIndex = (attendancePage - 1) * itemsPerPage;
+    return filteredRecords.slice(startIndex, startIndex + itemsPerPage);
+  }, [filteredRecords, attendancePage]);
+
+  const paginatedCorrections = useMemo(() => {
+    const startIndex = (correctionsPage - 1) * itemsPerPage;
+    return corrections.slice(startIndex, startIndex + itemsPerPage);
+  }, [corrections, correctionsPage]);
+
   // Compute daily metrics counts
   const stats = useMemo(() => {
     const total = employees.length || 256;
@@ -1104,24 +1124,87 @@ export default function AttendancePage() {
           <div className="bg-white rounded-2xl border border-card-border shadow-xs overflow-hidden flex flex-col justify-between transition-all duration-300 lg:col-span-2">
             <div>
               {/* Table Filters */}
-              <div className="p-5 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="flex flex-wrap items-center gap-3 flex-1">
-                  <div className="relative flex-1 min-w-[180px]">
-                    <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400">
-                      <Search className="h-4 w-4" />
-                    </span>
-                    <input
-                      type="text"
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      placeholder="Search name, EMP ID..."
-                      className="w-full pl-9 pr-4 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-700 bg-slate-50 focus:bg-white"
-                    />
+              <div className="p-5 border-b border-slate-100 flex flex-col gap-4">
+                {/* Row 1: Search, Date navigation, and Actions */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  {/* Left: Search input & Date picker */}
+                  <div className="flex flex-wrap items-center gap-3 flex-1">
+                    <div className="relative flex-1 min-w-[180px] max-w-[240px]">
+                      <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400">
+                        <Search className="h-4 w-4" />
+                      </span>
+                      <input
+                        type="text"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        placeholder="Search name, EMP ID..."
+                        className="w-full pl-9 pr-4 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-700 bg-slate-50 focus:bg-white"
+                      />
+                    </div>
+
+                    {/* Date Picker with Arrows */}
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        onClick={() => changeDateByAmount(-1)}
+                        className="p-1.5 border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-500 hover:text-slate-700 bg-white cursor-pointer transition-all"
+                      >
+                        <ChevronLeft className="h-3.5 w-3.5" />
+                      </button>
+                      <div className="relative">
+                        <input
+                          type="date"
+                          value={selectedDate}
+                          onChange={(e) => setSelectedDate(e.target.value)}
+                          className="pl-8 pr-3 py-1.5 w-36 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 bg-white cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        />
+                        <Calendar className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
+                      </div>
+                      <button
+                        onClick={() => changeDateByAmount(1)}
+                        className="p-1.5 border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-500 hover:text-slate-700 bg-white cursor-pointer transition-all"
+                      >
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
+
+                  {/* Right: Actions */}
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    {dailyLogs.length === 0 && canAddEdit && (
+                      <button
+                        onClick={(event) => handleInitializeLogs(event)}
+                        className="px-3 py-1.5 bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+                      >
+                        <SlidersHorizontal className="h-3.5 w-3.5" /> Initialize Sheet
+                      </button>
+                    )}
+                    {canAddEdit && (
+                      <button
+                        onClick={handleOpenAddPunch}
+                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-md shadow-blue-500/10 cursor-pointer flex items-center gap-1.5"
+                      >
+                        <Plus className="h-3.5 w-3.5" /> Manual Entry
+                      </button>
+                    )}
+                    {canExport && (
+                      <button
+                        onClick={handleExportCSV}
+                        disabled={filteredRecords.length === 0}
+                        className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 hover:text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 transition-colors cursor-pointer bg-white"
+                      >
+                        <Download className="h-4 w-4" /> Export
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Row 2: Select Filters */}
+                <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-slate-50">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1">Filters:</span>
                   <select
                     value={deptFilter}
                     onChange={(e) => setDeptFilter(e.target.value)}
-                    className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-600 bg-white"
+                    className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-600 bg-white cursor-pointer"
                   >
                     <option value="All">All Departments</option>
                     {departments.filter(d => d !== "All").map(d => (
@@ -1131,7 +1214,7 @@ export default function AttendancePage() {
                   <select
                     value={statusFilter}
                     onChange={(e) => setStatusFilter(e.target.value)}
-                    className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-600 bg-white"
+                    className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-600 bg-white cursor-pointer"
                   >
                     <option value="All">All Statuses</option>
                     <option value="Present">Present</option>
@@ -1140,59 +1223,6 @@ export default function AttendancePage() {
                     <option value="Absent">Absent</option>
                     <option value="Missing Punch">Missing Punch</option>
                   </select>
-                  
-                  {/* Date Picker with Arrows */}
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => changeDateByAmount(-1)}
-                      className="p-1.5 border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-500 hover:text-slate-700 bg-white"
-                    >
-                      <ChevronLeft className="h-3.5 w-3.5" />
-                    </button>
-                    <div className="relative">
-                      <input
-                        type="date"
-                        value={selectedDate}
-                        onChange={(e) => setSelectedDate(e.target.value)}
-                        className="pl-8 pr-3 py-1.5 w-36 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 bg-white cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      />
-                      <Calendar className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-                    </div>
-                    <button
-                      onClick={() => changeDateByAmount(1)}
-                      className="p-1.5 border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-500 hover:text-slate-700 bg-white"
-                    >
-                      <ChevronRight className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 shrink-0">
-                  {dailyLogs.length === 0 && canAddEdit && (
-                    <button
-                      onClick={(event) => handleInitializeLogs(event)}
-                      className="px-3 py-1.5 bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
-                    >
-                      <SlidersHorizontal className="h-3.5 w-3.5" /> Initialize Sheet
-                    </button>
-                  )}
-                  {canAddEdit && (
-                    <button
-                      onClick={handleOpenAddPunch}
-                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-md shadow-blue-500/10 cursor-pointer flex items-center gap-1.5"
-                    >
-                      <Plus className="h-3.5 w-3.5" /> Manual Entry
-                    </button>
-                  )}
-                  {canExport && (
-                    <button
-                      onClick={handleExportCSV}
-                      disabled={filteredRecords.length === 0}
-                      className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 hover:text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 transition-colors cursor-pointer bg-white"
-                    >
-                      <Download className="h-4 w-4" /> Export
-                    </button>
-                  )}
                 </div>
               </div>
 
@@ -1201,20 +1231,20 @@ export default function AttendancePage() {
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="bg-slate-50/75 border-b border-slate-100 text-[10px] font-bold text-slate-400 tracking-wider uppercase">
-                      <th className="py-3 px-4">EMP ID</th>
-                      <th className="py-3 px-4">Employee Name</th>
-                      <th className="py-3 px-4">Department</th>
-                      <th className="py-3 px-4">Shift</th>
-                      <th className="py-3 px-4">In Time</th>
-                      <th className="py-3 px-4">Out Time</th>
-                      <th className="py-3 px-4">Status</th>
-                      <th className="py-3 px-4">Work Hours</th>
-                      {canAddEdit && <th className="py-3 px-4 text-center">Action</th>}
+                      <th className="py-3 px-4 whitespace-nowrap">EMP ID</th>
+                      <th className="py-3 px-4 whitespace-nowrap">Employee Name</th>
+                      <th className="py-3 px-4 whitespace-nowrap">Department</th>
+                      <th className="py-3 px-4 whitespace-nowrap">Shift</th>
+                      <th className="py-3 px-4 whitespace-nowrap">In Time</th>
+                      <th className="py-3 px-4 whitespace-nowrap">Out Time</th>
+                      <th className="py-3 px-4 whitespace-nowrap">Status</th>
+                      <th className="py-3 px-4 whitespace-nowrap">Work Hours</th>
+                      {canAddEdit && <th className="py-3 px-4 text-center whitespace-nowrap">Action</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-xs">
-                    {filteredRecords.length > 0 ? (
-                      filteredRecords.map((rec) => (
+                    {paginatedRecords.length > 0 ? (
+                      paginatedRecords.map((rec) => (
                         <tr
                           key={rec.empId}
                           onClick={() => {
@@ -1225,28 +1255,28 @@ export default function AttendancePage() {
                             selectedEmp?.id === rec.empId ? "bg-blue-50/30" : ""
                           }`}
                         >
-                          <td className="py-3 px-4 font-bold text-slate-800">{rec.empId}</td>
-                          <td className="py-3 px-4 font-bold text-slate-700">
+                          <td className="py-3 px-4 font-bold text-slate-800 whitespace-nowrap">{rec.empId}</td>
+                          <td className="py-3 px-4 font-bold text-slate-700 whitespace-nowrap">
                             <div className="flex items-center gap-2">
-                              <div className="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center font-bold text-[9px] text-slate-600 border border-slate-200">
+                              <div className="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center font-bold text-[9px] text-slate-600 border border-slate-200 shrink-0">
                                 {rec.empName.split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase()}
                               </div>
-                              <span className="hover:text-blue-600 font-bold">{rec.empName}</span>
+                              <span className="hover:text-blue-600 font-bold whitespace-nowrap">{rec.empName}</span>
                             </div>
                           </td>
-                          <td className="py-3 px-4 text-slate-600 font-medium">{rec.department}</td>
-                          <td className="py-3 px-4 text-slate-500 font-medium">{rec.shift}</td>
-                          <td className="py-3 px-4 font-bold text-slate-700">{rec.inTime}</td>
-                          <td className="py-3 px-4 font-bold text-slate-700">{rec.outTime}</td>
-                          <td className="py-3 px-4">
-                            <span className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-bold ${getStatusStyle(rec.status)}`}>
+                          <td className="py-3 px-4 text-slate-600 font-medium whitespace-nowrap">{rec.department}</td>
+                          <td className="py-3 px-4 text-slate-500 font-medium whitespace-nowrap">{rec.shift}</td>
+                          <td className="py-3 px-4 font-bold text-slate-700 whitespace-nowrap">{rec.inTime}</td>
+                          <td className="py-3 px-4 font-bold text-slate-700 whitespace-nowrap">{rec.outTime}</td>
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <span className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-bold whitespace-nowrap ${getStatusStyle(rec.status)}`}>
                               {rec.status}
                             </span>
                           </td>
-                          <td className="py-3 px-4 font-bold text-slate-600">{rec.workHours}</td>
+                          <td className="py-3 px-4 font-bold text-slate-600 whitespace-nowrap">{rec.workHours}</td>
                           {canAddEdit && (
-                            <td className="py-3 px-4 text-center" onClick={(e) => e.stopPropagation()}>
-                              <div className="flex items-center justify-center gap-1">
+                            <td className="py-3 px-4 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                              <div className="flex items-center justify-center gap-1 whitespace-nowrap">
                                 <button
                                   onClick={() => handleOpenEditPunch(rec)}
                                   className="p-1 text-slate-400 hover:text-indigo-600 rounded hover:bg-slate-100"
@@ -1287,11 +1317,26 @@ export default function AttendancePage() {
 
             {/* Daily Pagination Footer */}
             <div className="p-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold bg-slate-50/50">
-              <span>Showing 1 to {filteredRecords.length} of {filteredRecords.length} records</span>
+              <span>
+                Showing {filteredRecords.length === 0 ? 0 : (attendancePage - 1) * itemsPerPage + 1} to{" "}
+                {Math.min(attendancePage * itemsPerPage, filteredRecords.length)} of {filteredRecords.length} records
+              </span>
               <div className="flex items-center gap-1.5">
-                <button disabled className="px-2 py-0.5 border border-slate-200 bg-white rounded-md opacity-50 cursor-not-allowed">Prev</button>
-                <button className="px-2.5 py-0.5 bg-blue-600 text-white rounded-md">1</button>
-                <button disabled className="px-2 py-0.5 border border-slate-200 bg-white rounded-md opacity-50 cursor-not-allowed">Next</button>
+                <button
+                  onClick={() => setAttendancePage(p => Math.max(p - 1, 1))}
+                  disabled={attendancePage === 1}
+                  className="px-2 py-0.5 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  Prev
+                </button>
+                <button className="px-2.5 py-0.5 bg-blue-600 text-white rounded-md">{attendancePage}</button>
+                <button
+                  onClick={() => setAttendancePage(p => p + 1)}
+                  disabled={attendancePage * itemsPerPage >= filteredRecords.length}
+                  className="px-2 py-0.5 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  Next
+                </button>
               </div>
             </div>
           </div>
@@ -1596,33 +1641,33 @@ export default function AttendancePage() {
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-50/75 border-b border-slate-100 text-[10px] font-bold text-slate-400 tracking-wider uppercase">
-                    <th className="py-2.5 px-4">Employee</th>
-                    <th className="py-2.5 px-4">Request Date</th>
-                    <th className="py-2.5 px-4">Adjustment Type</th>
-                    <th className="py-2.5 px-4">Requested Punch</th>
-                    <th className="py-2.5 px-4">Reason</th>
-                    <th className="py-2.5 px-4">Status</th>
-                    {canApprove && <th className="py-2.5 px-4 text-center">Action</th>}
+                    <th className="py-2.5 px-4 whitespace-nowrap">Employee</th>
+                    <th className="py-2.5 px-4 whitespace-nowrap">Request Date</th>
+                    <th className="py-2.5 px-4 whitespace-nowrap">Adjustment Type</th>
+                    <th className="py-2.5 px-4 whitespace-nowrap">Requested Punch</th>
+                    <th className="py-2.5 px-4 whitespace-nowrap">Reason</th>
+                    <th className="py-2.5 px-4 whitespace-nowrap">Status</th>
+                    {canApprove && <th className="py-2.5 px-4 text-center whitespace-nowrap">Action</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs">
-                  {corrections.length > 0 ? (
-                    corrections.map((item) => (
+                  {paginatedCorrections.length > 0 ? (
+                    paginatedCorrections.map((item) => (
                       <tr key={item.id} className="hover:bg-slate-50/30">
-                        <td className="py-3 px-4 font-bold text-slate-700">{item.empName}</td>
-                        <td className="py-3 px-4 text-slate-500 font-medium">{item.date}</td>
-                        <td className="py-3 px-4">
-                          <span className="font-semibold text-slate-600">{item.type}</span>
+                        <td className="py-3 px-4 font-bold text-slate-700 whitespace-nowrap">{item.empName}</td>
+                        <td className="py-3 px-4 text-slate-500 font-medium whitespace-nowrap">{item.date}</td>
+                        <td className="py-3 px-4 whitespace-nowrap">
+                          <span className="font-semibold text-slate-600 whitespace-nowrap">{item.type}</span>
                         </td>
-                        <td className="py-3 px-4 font-mono font-bold text-[10px] text-slate-600">
+                        <td className="py-3 px-4 font-mono font-bold text-[10px] text-slate-600 whitespace-nowrap">
                           IN: {item.requestedInTime || "--:--"} | OUT: {item.requestedOutTime || "--:--"}
                         </td>
-                        <td className="py-3 px-4 text-slate-500 font-medium max-w-xs truncate" title={item.reason}>
+                        <td className="py-3 px-4 text-slate-500 font-medium max-w-xs truncate whitespace-nowrap" title={item.reason}>
                           {item.reason}
                         </td>
-                        <td className="py-3 px-4">
+                        <td className="py-3 px-4 whitespace-nowrap">
                           <span
-                            className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                            className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-bold whitespace-nowrap ${
                               item.status === "Approved"
                                 ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
                                 : item.status === "Rejected"
@@ -1634,24 +1679,24 @@ export default function AttendancePage() {
                           </span>
                         </td>
                         {canApprove && (
-                          <td className="py-3 px-4 text-center">
+                          <td className="py-3 px-4 text-center whitespace-nowrap">
                             {item.status === "Pending" ? (
-                              <div className="flex items-center justify-center gap-1.5">
+                              <div className="flex items-center justify-center gap-1.5 whitespace-nowrap">
                                 <button
                                   onClick={(event) => handleCorrectionAction(item, "Approved", event)}
-                                  className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[10px] rounded-md transition-colors flex items-center gap-0.5 cursor-pointer"
+                                  className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[10px] rounded-md transition-colors flex items-center gap-0.5 cursor-pointer whitespace-nowrap"
                                 >
                                   <CheckCircle2 className="h-3 w-3" /> Approve
                                 </button>
                                 <button
                                   onClick={(event) => handleCorrectionAction(item, "Rejected", event)}
-                                  className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-semibold text-[10px] rounded-md transition-colors flex items-center gap-0.5 cursor-pointer"
+                                  className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-semibold text-[10px] rounded-md transition-colors flex items-center gap-0.5 cursor-pointer whitespace-nowrap"
                                 >
                                   <XCircle className="h-3 w-3" /> Reject
                                 </button>
                               </div>
                             ) : (
-                              <span className="text-[10px] text-slate-400 font-medium">Processed</span>
+                              <span className="text-[10px] text-slate-400 font-medium whitespace-nowrap">Processed</span>
                             )}
                           </td>
                         )}
@@ -1667,13 +1712,38 @@ export default function AttendancePage() {
                 </tbody>
               </table>
             </div>
+            {/* Corrections Pagination Footer */}
+            <div className="p-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold bg-slate-50/50">
+              <span>
+                Showing {corrections.length === 0 ? 0 : (correctionsPage - 1) * itemsPerPage + 1} to{" "}
+                {Math.min(correctionsPage * itemsPerPage, corrections.length)} of {corrections.length} requests
+              </span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setCorrectionsPage(p => Math.max(p - 1, 1))}
+                  disabled={correctionsPage === 1}
+                  className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  Prev
+                </button>
+                <button className="px-2.5 py-1 bg-blue-600 text-white rounded-md">{correctionsPage}</button>
+                <button
+                  onClick={() => setCorrectionsPage(p => p + 1)}
+                  disabled={correctionsPage * itemsPerPage >= corrections.length}
+                  className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
 
       {/* Modal 1: Manual Add / Edit Punch Record */}
       {showPunchModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs select-none p-4 animate-fade-in">
+        <Portal>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs select-none p-4 animate-fade-in">
           <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl border border-slate-100 p-6 flex flex-col">
             
             <div className="flex justify-between items-center pb-3 border-b border-slate-100">
@@ -1774,11 +1844,13 @@ export default function AttendancePage() {
             </form>
           </div>
         </div>
+        </Portal>
       )}
 
       {/* Modal 2: Employee Correction Request Form */}
       {showCorrectionModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs select-none p-4 animate-fade-in">
+        <Portal>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs select-none p-4 animate-fade-in">
           <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl border border-slate-100 p-6 flex flex-col">
             
             <div className="flex justify-between items-center pb-3 border-b border-slate-100">
@@ -1875,27 +1947,18 @@ export default function AttendancePage() {
             </form>
           </div>
         </div>
+        </Portal>
       )}
 
       {/* Custom Confirmation Modal */}
       {confirmModal.show && (
-        <div 
-          className="fixed inset-0 z-[100] bg-black/15 backdrop-blur-[1px] select-none p-4 animate-fade-in-fast"
-          onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
-        >
+        <Portal>
           <div 
-            className="absolute bg-white rounded-2xl w-full max-w-[320px] shadow-2xl border border-slate-100 p-5 space-y-4 z-[101] animate-pop-in"
-            style={confirmModal.position ? {
-              position: 'fixed',
-              top: confirmModal.position.top,
-              left: confirmModal.position.left
-            } : {
-              position: 'fixed',
-              top: '50%',
-              left: '50%',
-              transform: 'translate(-50%, -50%)',
-              maxWidth: '380px'
-            }}
+            className="fixed inset-0 z-[100] bg-black/15 backdrop-blur-[1px] select-none p-4 flex items-center justify-center animate-fade-in-fast"
+            onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+          >
+          <div 
+            className="bg-white rounded-2xl w-full max-w-[320px] shadow-2xl border border-slate-100 p-5 space-y-4 z-[101] animate-pop-in"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start gap-3.5">
@@ -1956,6 +2019,7 @@ export default function AttendancePage() {
             </div>
           </div>
         </div>
+        </Portal>
       )}
 
     </div>

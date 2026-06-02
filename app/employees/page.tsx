@@ -34,6 +34,7 @@ import { db, firebaseConfig } from "@/lib/firebase";
 import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, getDocs } from "firebase/firestore";
 import { initializeApp, deleteApp } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword, signOut } from "firebase/auth";
+import Portal from "@/components/Portal";
 
 interface ParsedImportRecord {
   tempId: string;
@@ -52,6 +53,14 @@ export default function EmployeesPage() {
   const [activeTab, setActiveTab] = useState("personal");
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, deptFilter, statusFilter]);
 
   // Add / Edit Modal State
   const [showModal, setShowModal] = useState(false);
@@ -379,6 +388,11 @@ export default function EmployeesPage() {
       return matchesSearch && matchesDept && matchesStatus;
     });
   }, [employees, searchTerm, deptFilter, statusFilter]);
+
+  const paginatedEmployees = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    return filteredEmployees.slice(startIndex, startIndex + itemsPerPage);
+  }, [filteredEmployees, currentPage]);
 
   // Photo upload handler
   const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1126,8 +1140,8 @@ export default function EmployeesPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs">
-                  {filteredEmployees.length > 0 ? (
-                    filteredEmployees.map((emp) => (
+                  {paginatedEmployees.length > 0 ? (
+                    paginatedEmployees.map((emp) => (
                       <tr
                         key={emp.id}
                         onClick={() => setSelectedEmp(emp)}
@@ -1219,11 +1233,26 @@ export default function EmployeesPage() {
           </div>
           {/* Pagination */}
           <div className="p-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold bg-slate-50/50">
-            <span>Showing 1 to {filteredEmployees.length} of {filteredEmployees.length} entries</span>
+            <span>
+              Showing {filteredEmployees.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1} to{" "}
+              {Math.min(currentPage * itemsPerPage, filteredEmployees.length)} of {filteredEmployees.length} entries
+            </span>
             <div className="flex items-center gap-1.5">
-              <button disabled className="px-2.5 py-1 border border-slate-200 bg-white rounded-md opacity-50 cursor-not-allowed">Previous</button>
-              <button className="px-2.5 py-1 bg-blue-600 text-white rounded-md">1</button>
-              <button disabled className="px-2.5 py-1 border border-slate-200 bg-white rounded-md opacity-50 cursor-not-allowed">Next</button>
+              <button
+                onClick={() => setCurrentPage(p => Math.max(p - 1, 1))}
+                disabled={currentPage === 1}
+                className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                Previous
+              </button>
+              <button className="px-2.5 py-1 bg-blue-600 text-white rounded-md">{currentPage}</button>
+              <button
+                onClick={() => setCurrentPage(p => p + 1)}
+                disabled={currentPage * itemsPerPage >= filteredEmployees.length}
+                className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                Next
+              </button>
             </div>
           </div>
         </div>
@@ -1446,7 +1475,8 @@ export default function EmployeesPage() {
 
       {/* Add / Edit Employee Modal */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs select-none p-4 overflow-y-auto">
+        <Portal>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs select-none p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl border border-slate-100 flex flex-col max-h-[90vh]">
             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-2xl">
               <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
@@ -1868,11 +1898,13 @@ export default function EmployeesPage() {
             </form>
           </div>
         </div>
+        </Portal>
       )}
 
       {/* Bulk CSV Import Modal */}
       {showImportModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs select-none p-4 overflow-y-auto">
+        <Portal>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs select-none p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl border border-slate-100 flex flex-col max-h-[90vh]">
             
             {/* Modal Header */}
@@ -2095,29 +2127,20 @@ export default function EmployeesPage() {
 
           </div>
         </div>
+        </Portal>
       )}
 
       {/* Custom Confirmation Modal */}
       {confirmModal.show && (
-        <div 
-          className="fixed inset-0 z-[100] bg-black/15 backdrop-blur-[1px] select-none p-4 animate-fade-in-fast"
-          onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
-        >
+        <Portal>
           <div 
-            className="absolute bg-white rounded-2xl w-full max-w-[320px] shadow-2xl border border-slate-100 p-5 space-y-4 z-[101] animate-pop-in"
-            style={confirmModal.position ? {
-              position: 'fixed',
-              top: confirmModal.position.top,
-              left: confirmModal.position.left
-            } : {
-              position: 'fixed',
-              top: '50%',
-              left: '50%',
-              transform: 'translate(-50%, -50%)',
-              maxWidth: '380px'
-            }}
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-[100] bg-black/15 backdrop-blur-[1px] select-none p-4 flex items-center justify-center animate-fade-in-fast"
+            onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
           >
+            <div 
+              className="bg-white rounded-2xl w-full max-w-[320px] shadow-2xl border border-slate-100 p-5 space-y-4 z-[101] animate-pop-in"
+              onClick={(e) => e.stopPropagation()}
+            >
             <div className="flex items-start gap-3.5">
               <div className={`p-2.5 rounded-full shrink-0 ${
                 confirmModal.type === "danger" 
@@ -2170,6 +2193,7 @@ export default function EmployeesPage() {
             </div>
           </div>
         </div>
+        </Portal>
       )}
     </div>
   );

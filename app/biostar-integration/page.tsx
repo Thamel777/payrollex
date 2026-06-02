@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
   Fingerprint,
   RefreshCw,
@@ -28,6 +28,14 @@ export default function BiostarIntegrationPage() {
     { id: 5, time: "May 20, 2024 09:15 AM", event: "Attendance Sync", details: "1,150 records imported from BioStar 2", status: "Success" },
   ]);
 
+  const [logsPage, setLogsPage] = useState(1);
+  const itemsPerPage = 10;
+
+  const paginatedLogs = useMemo(() => {
+    const startIndex = (logsPage - 1) * itemsPerPage;
+    return logs.slice(startIndex, startIndex + itemsPerPage);
+  }, [logs, logsPage]);
+
   const handleSyncNow = () => {
     setIsSyncing(true);
     setTimeout(() => {
@@ -48,6 +56,7 @@ export default function BiostarIntegrationPage() {
         status: "Success"
       };
       setLogs(prev => [newLog, ...prev]);
+      setLogsPage(1);
     }, 1500);
   };
 
@@ -164,7 +173,7 @@ export default function BiostarIntegrationPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-medium">
-                  {logs.map((item) => (
+                  {paginatedLogs.map((item) => (
                     <tr key={item.id} className="hover:bg-slate-50/30">
                       <td className="py-3 px-4 font-bold text-slate-700">{item.time}</td>
                       <td className="py-3 px-3">
@@ -180,6 +189,30 @@ export default function BiostarIntegrationPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+          {/* Pagination for Integration Logs */}
+          <div className="p-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold bg-slate-50/50">
+            <span>
+              Showing {logs.length === 0 ? 0 : (logsPage - 1) * itemsPerPage + 1} to{" "}
+              {Math.min(logsPage * itemsPerPage, logs.length)} of {logs.length} entries
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setLogsPage(p => Math.max(p - 1, 1))}
+                disabled={logsPage === 1}
+                className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                Previous
+              </button>
+              <button className="px-2.5 py-1 bg-blue-600 text-white rounded-md">{logsPage}</button>
+              <button
+                onClick={() => setLogsPage(p => p + 1)}
+                disabled={logsPage * itemsPerPage >= logs.length}
+                className="px-2.5 py-1 border border-slate-200 bg-white rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                Next
+              </button>
             </div>
           </div>
         </div>
