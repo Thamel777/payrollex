@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
 import { mockAllowances, mockDeductions } from "@/lib/mockData";
+import Portal from "@/components/Portal";
 
 export default function AllowancesDeductionsPage() {
   const [mounted, setMounted] = useState(false);
@@ -380,7 +381,8 @@ export default function AllowancesDeductionsPage() {
 
       {/* Add Allowance Modal */}
       {showAddAllowance && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs">
+        <Portal>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs">
           <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl border border-slate-100">
             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-2xl">
               <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
@@ -453,11 +455,13 @@ export default function AllowancesDeductionsPage() {
             </form>
           </div>
         </div>
+        </Portal>
       )}
 
       {/* Add Deduction Modal */}
       {showAddDeduction && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs">
+        <Portal>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs">
           <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl border border-slate-100">
             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-2xl">
               <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
@@ -530,6 +534,7 @@ export default function AllowancesDeductionsPage() {
             </form>
           </div>
         </div>
+        </Portal>
       )}
     </div>
   );

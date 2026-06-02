@@ -46,6 +46,7 @@ import {
 } from "recharts";
 import { mockAttendance, Employee, CorrectionRequest } from "@/lib/mockData";
 import { useAuth } from "@/lib/AuthContext";
+import Portal from "@/components/Portal";
 import { db } from "@/lib/firebase";
 import {
   collection,
@@ -1673,7 +1674,8 @@ export default function AttendancePage() {
 
       {/* Modal 1: Manual Add / Edit Punch Record */}
       {showPunchModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs select-none p-4 animate-fade-in">
+        <Portal>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs select-none p-4 animate-fade-in">
           <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl border border-slate-100 p-6 flex flex-col">
             
             <div className="flex justify-between items-center pb-3 border-b border-slate-100">
@@ -1774,11 +1776,13 @@ export default function AttendancePage() {
             </form>
           </div>
         </div>
+        </Portal>
       )}
 
       {/* Modal 2: Employee Correction Request Form */}
       {showCorrectionModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs select-none p-4 animate-fade-in">
+        <Portal>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs select-none p-4 animate-fade-in">
           <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl border border-slate-100 p-6 flex flex-col">
             
             <div className="flex justify-between items-center pb-3 border-b border-slate-100">
@@ -1875,27 +1879,18 @@ export default function AttendancePage() {
             </form>
           </div>
         </div>
+        </Portal>
       )}
 
       {/* Custom Confirmation Modal */}
       {confirmModal.show && (
-        <div 
-          className="fixed inset-0 z-[100] bg-black/15 backdrop-blur-[1px] select-none p-4 animate-fade-in-fast"
-          onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
-        >
+        <Portal>
           <div 
-            className="absolute bg-white rounded-2xl w-full max-w-[320px] shadow-2xl border border-slate-100 p-5 space-y-4 z-[101] animate-pop-in"
-            style={confirmModal.position ? {
-              position: 'fixed',
-              top: confirmModal.position.top,
-              left: confirmModal.position.left
-            } : {
-              position: 'fixed',
-              top: '50%',
-              left: '50%',
-              transform: 'translate(-50%, -50%)',
-              maxWidth: '380px'
-            }}
+            className="fixed inset-0 z-[100] bg-black/15 backdrop-blur-[1px] select-none p-4 flex items-center justify-center animate-fade-in-fast"
+            onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+          >
+          <div 
+            className="bg-white rounded-2xl w-full max-w-[320px] shadow-2xl border border-slate-100 p-5 space-y-4 z-[101] animate-pop-in"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start gap-3.5">
@@ -1956,6 +1951,7 @@ export default function AttendancePage() {
             </div>
           </div>
         </div>
+        </Portal>
       )}
 
     </div>

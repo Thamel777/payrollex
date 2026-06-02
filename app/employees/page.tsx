@@ -34,6 +34,7 @@ import { db, firebaseConfig } from "@/lib/firebase";
 import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, getDocs } from "firebase/firestore";
 import { initializeApp, deleteApp } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword, signOut } from "firebase/auth";
+import Portal from "@/components/Portal";
 
 interface ParsedImportRecord {
   tempId: string;
@@ -1446,7 +1447,8 @@ export default function EmployeesPage() {
 
       {/* Add / Edit Employee Modal */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs select-none p-4 overflow-y-auto">
+        <Portal>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs select-none p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl border border-slate-100 flex flex-col max-h-[90vh]">
             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-2xl">
               <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
@@ -1868,11 +1870,13 @@ export default function EmployeesPage() {
             </form>
           </div>
         </div>
+        </Portal>
       )}
 
       {/* Bulk CSV Import Modal */}
       {showImportModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs select-none p-4 overflow-y-auto">
+        <Portal>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs select-none p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl border border-slate-100 flex flex-col max-h-[90vh]">
             
             {/* Modal Header */}
@@ -2095,12 +2099,14 @@ export default function EmployeesPage() {
 
           </div>
         </div>
+        </Portal>
       )}
 
       {/* Custom Confirmation Modal */}
       {confirmModal.show && (
-        <div 
-          className="fixed inset-0 z-[100] bg-black/15 backdrop-blur-[1px] select-none p-4 animate-fade-in-fast"
+        <Portal>
+          <div 
+            className="fixed inset-0 z-[100] bg-black/15 backdrop-blur-[1px] select-none p-4 animate-fade-in-fast"
           onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
         >
           <div 
@@ -2170,6 +2176,7 @@ export default function EmployeesPage() {
             </div>
           </div>
         </div>
+        </Portal>
       )}
     </div>
   );

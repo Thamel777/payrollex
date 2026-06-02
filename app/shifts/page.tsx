@@ -21,6 +21,7 @@ import { mockEmployees, mockShifts, Shift, Employee } from "@/lib/mockData";
 import { db } from "@/lib/firebase";
 import { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, onSnapshot } from "firebase/firestore";
 import { useAuth } from "@/lib/AuthContext";
+import Portal from "@/components/Portal";
 
 export default function ShiftRosterPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -994,7 +995,8 @@ export default function ShiftRosterPage() {
 
       {/* Edit Shift Rules Modal */}
       {showRulesModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs">
+        <Portal>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs">
           <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl border border-slate-100">
             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-2xl">
               <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
@@ -1050,11 +1052,13 @@ export default function ShiftRosterPage() {
             </form>
           </div>
         </div>
+        </Portal>
       )}
 
       {/* Add/Edit Shift Modal */}
       {showShiftModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs">
+        <Portal>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs">
           <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl border border-slate-100">
             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-2xl">
               <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
@@ -1151,11 +1155,13 @@ export default function ShiftRosterPage() {
             </form>
           </div>
         </div>
+        </Portal>
       )}
 
       {/* Bulk Shift Allocation Modal */}
       {showAllocateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs">
+        <Portal>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs">
           <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl border border-slate-100">
             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-2xl">
               <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
@@ -1284,28 +1290,20 @@ export default function ShiftRosterPage() {
             </form>
           </div>
         </div>
+        </Portal>
       )}
 
       {/* Custom Snappy Confirmation Popup Modal Overlay */}
       {confirmModal.show && (
-        <div 
-          className="fixed inset-0 z-[1000] bg-transparent"
-          onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
-        >
+        <Portal>
           <div 
-            className="absolute bg-white rounded-2xl shadow-xl border border-slate-200 p-4 w-[320px] z-[1001] animate-pop-in text-xs font-semibold"
-            style={confirmModal.position ? {
-              position: 'fixed',
-              top: confirmModal.position.top,
-              left: confirmModal.position.left
-            } : {
-              position: 'fixed',
-              top: '50%',
-              left: '50%',
-              transform: 'translate(-50%, -50%)'
-            }}
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-[1000] bg-black/15 backdrop-blur-[1px] select-none p-4 flex items-center justify-center animate-fade-in-fast"
+            onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
           >
+            <div 
+              className="bg-white rounded-2xl shadow-xl border border-slate-200 p-4 w-[320px] z-[1001] animate-pop-in text-xs font-semibold"
+              onClick={(e) => e.stopPropagation()}
+            >
             <div className="flex items-start gap-3">
               <div className={`p-2.5 rounded-lg ${
                 confirmModal.type === "danger" 
@@ -1354,11 +1352,12 @@ export default function ShiftRosterPage() {
             </div>
           </div>
         </div>
+        </Portal>
       )}
 
       {/* Active Cell Shift Selection Popover (positioned context-sensitively next to action button/cell) */}
       {activeCell && (
-        <>
+        <Portal>
           {/* Overlay to catch clicks and close */}
           <div 
             className="fixed inset-0 z-[100] bg-transparent"
@@ -1401,17 +1400,19 @@ export default function ShiftRosterPage() {
               </button>
             </div>
           </div>
-        </>
+        </Portal>
       )}
 
       {/* Loading Overlay */}
       {dbLoading && (
-        <div className="fixed inset-0 bg-slate-900/10 backdrop-blur-xs flex items-center justify-center z-[200]">
+        <Portal>
+          <div className="fixed inset-0 bg-slate-900/10 backdrop-blur-xs flex items-center justify-center z-[200]">
           <div className="bg-white px-5 py-3.5 rounded-2xl shadow-xl border border-slate-100 flex items-center gap-3">
             <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
             <span className="text-xs font-bold text-slate-600">Connecting to Firestore...</span>
           </div>
         </div>
+        </Portal>
       )}
     </div>
   );
