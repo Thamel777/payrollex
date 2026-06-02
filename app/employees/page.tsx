@@ -2106,24 +2106,13 @@ export default function EmployeesPage() {
       {confirmModal.show && (
         <Portal>
           <div 
-            className="fixed inset-0 z-[100] bg-black/15 backdrop-blur-[1px] select-none p-4 animate-fade-in-fast"
-          onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
-        >
-          <div 
-            className="absolute bg-white rounded-2xl w-full max-w-[320px] shadow-2xl border border-slate-100 p-5 space-y-4 z-[101] animate-pop-in"
-            style={confirmModal.position ? {
-              position: 'fixed',
-              top: confirmModal.position.top,
-              left: confirmModal.position.left
-            } : {
-              position: 'fixed',
-              top: '50%',
-              left: '50%',
-              transform: 'translate(-50%, -50%)',
-              maxWidth: '380px'
-            }}
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-[100] bg-black/15 backdrop-blur-[1px] select-none p-4 flex items-center justify-center animate-fade-in-fast"
+            onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
           >
+            <div 
+              className="bg-white rounded-2xl w-full max-w-[320px] shadow-2xl border border-slate-100 p-5 space-y-4 z-[101] animate-pop-in"
+              onClick={(e) => e.stopPropagation()}
+            >
             <div className="flex items-start gap-3.5">
               <div className={`p-2.5 rounded-full shrink-0 ${
                 confirmModal.type === "danger" 
