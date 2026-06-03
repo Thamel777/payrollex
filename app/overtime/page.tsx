@@ -252,7 +252,7 @@ export default function OvertimePage() {
     });
 
     if (list.length === 0 && dbLoading) {
-      return mockOvertimeRequests.map(r => ({ ...r, empId: "EMP001" }));
+      return [];
     }
 
     // Sort desc by date

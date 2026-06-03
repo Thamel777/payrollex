@@ -46,11 +46,7 @@ export default function Dashboard() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [dbLoading, setDbLoading] = useState(true);
 
-  // Mock leave/OT approvals
-  const [mockApprovals, setMockApprovals] = useState([
-    { id: "LV-01", type: "Leave", name: "Kavindi Silva", dept: "HR", details: "Medical Leave (1 Day)", status: "Pending" },
-    { id: "OT-01", type: "Overtime", name: "Minura Fernando", dept: "Finance", details: "Night OT (4 Hours)", status: "Pending" },
-  ]);
+  // (Mock approvals removed, computing from DB below)
 
   // Custom Confirmation Modal State
   const [confirmModal, setConfirmModal] = useState<{
@@ -227,10 +223,49 @@ export default function Dashboard() {
     return list;
   }, [employees]);
 
-  // Combine mock Leave/OT with database Corrections
+  const dbLeavesAndOT = useMemo(() => {
+    const list: any[] = [];
+    employees.forEach(emp => {
+      if (emp.leaveRequests) {
+        Object.values(emp.leaveRequests).forEach(req => {
+          if (req.status === "Pending") {
+            list.push({
+              id: req.id,
+              empId: emp.id,
+              type: "Leave",
+              name: emp.name,
+              dept: emp.department,
+              details: `${req.leaveType} (${req.duration})`,
+              status: "Pending",
+              rawRequest: req
+            });
+          }
+        });
+      }
+      if (emp.overtimeRequests) {
+        Object.values(emp.overtimeRequests).forEach(req => {
+          if (req.status === "Pending") {
+            list.push({
+              id: req.id,
+              empId: emp.id,
+              type: "Overtime",
+              name: emp.name,
+              dept: emp.department,
+              details: `${req.type} (${req.hours} Hours)`,
+              status: "Pending",
+              rawRequest: req
+            });
+          }
+        });
+      }
+    });
+    return list;
+  }, [employees]);
+
+  // Combine Leave/OT with database Corrections
   const pendingApprovals = useMemo(() => {
-    return [...mockApprovals, ...dbCorrections];
-  }, [mockApprovals, dbCorrections]);
+    return [...dbLeavesAndOT, ...dbCorrections];
+  }, [dbLeavesAndOT, dbCorrections]);
 
   // Calculate status and workHours from punch times
   const calculatePunchStatusAndHours = (inTime: string, outTime: string): { status: "Present" | "Late" | "Early Leave" | "Absent" | "Missing Punch"; workHours: string; lateMin: number } => {
@@ -350,9 +385,35 @@ export default function Dashboard() {
         event
       );
     } else {
-      // Mock action for Leave / OT
-      setMockApprovals(prev => prev.filter(app => app.id !== item.id));
-      showAlert("Success", `Request was successfully ${action.toLowerCase()}!`, "success", event);
+      // Dynamic action for Leave / OT
+      const updateLeaveOT = async () => {
+        try {
+          const emp = employees.find(e => e.id === item.empId);
+          if (emp) {
+            if (item.type === "Leave" && emp.leaveRequests && emp.leaveRequests[item.id]) {
+              await updateDoc(doc(db, "employees", emp.id), {
+                [`leaveRequests.${item.id}.status`]: action
+              });
+            } else if (item.type === "Overtime" && emp.overtimeRequests && emp.overtimeRequests[item.id]) {
+              await updateDoc(doc(db, "employees", emp.id), {
+                [`overtimeRequests.${item.id}.status`]: action
+              });
+            }
+          }
+          showAlert("Success", `Request was successfully ${action.toLowerCase()}!`, "success", event);
+        } catch (e: any) {
+          showAlert("Error", "Failed to process request: " + e.message, "danger", event);
+        }
+      };
+      showConfirm(
+        `${action === "Approved" ? "Approve" : "Reject"} Request`,
+        `Are you sure you want to ${action.toLowerCase()} this ${item.type.toLowerCase()} request for ${item.name}?`,
+        updateLeaveOT,
+        action === "Approved" ? "success" : "danger",
+        action === "Approved" ? "Approve" : "Reject",
+        "Cancel",
+        event
+      );
     }
   };
 
@@ -365,13 +426,29 @@ export default function Dashboard() {
     }, 1500);
   };
 
-  // Mock data for charts
-  const attendanceData = [
-    { name: "Present", value: 198, color: "#10b981" },
-    { name: "Absent", value: 32, color: "#ef4444" },
-    { name: "Late", value: 18, color: "#f97316" },
-    { name: "Early Leave", value: 8, color: "#eab308" },
-  ];
+  // Dynamic data for charts
+  const attendanceData = useMemo(() => {
+    let present = 0, absent = 0, late = 0, early = 0;
+    const today = "2024-05-20"; // Standardizing to the mock date used in the system
+    if (employees.length === 0) return [];
+    employees.forEach(emp => {
+      if (emp.attendanceLogs && emp.attendanceLogs[today]) {
+        const status = emp.attendanceLogs[today].status;
+        if (status === "Present") present++;
+        else if (status === "Absent") absent++;
+        else if (status === "Late") late++;
+        else if (status === "Early Leave") early++;
+      } else {
+        absent++;
+      }
+    });
+    return [
+      { name: "Present", value: present, color: "#10b981" },
+      { name: "Absent", value: absent, color: "#ef4444" },
+      { name: "Late", value: late, color: "#f97316" },
+      { name: "Early Leave", value: early, color: "#eab308" },
+    ];
+  }, [employees]);
 
   const weeklyTrendData = [
     { day: "Mon", Present: 185, Late: 22, Absent: 15 },
@@ -381,22 +458,37 @@ export default function Dashboard() {
     { day: "Fri", Present: 195, Late: 15, Absent: 14 },
     { day: "Sat", Present: 45, Late: 2, Absent: 8 },
     { day: "Sun", Present: 20, Late: 1, Absent: 5 },
-  ];
+  ]; // Kept static for visual continuity as historical data doesn't exist yet
 
-  const payrollBreakdownData = [
-    { dept: "IT", Basic: 720000, Allowances: 120000, Overtime: 45000 },
-    { dept: "HR", Basic: 480000, Allowances: 85000, Overtime: 20000 },
-    { dept: "Finance", Basic: 620000, Allowances: 95000, Overtime: 32000 },
-    { dept: "Marketing", Basic: 410000, Allowances: 60000, Overtime: 15000 },
-    { dept: "Operations", Basic: 890000, Allowances: 150000, Overtime: 80000 },
-  ];
+  const kpis = useMemo(() => {
+    let activeLeaves = 0;
+    let payrollCost = 0;
+    const today = "2024-05-20";
 
-  const kpis = [
-    { title: "Total Employees", value: "256", icon: Users, color: "from-blue-500 to-indigo-600", desc: "All departments", change: "+8 new joiners" },
-    { title: "Today's Attendance", value: "198 / 256", icon: Clock, color: "from-emerald-400 to-teal-600", desc: "77.3% Present rate", change: "18 late arrivals" },
-    { title: "Active Leaves", value: "18", icon: CalendarCheck, color: "from-amber-400 to-orange-500", desc: "Approved for today", change: "6 pending requests" },
-    { title: "Monthly Payroll Cost", value: "LKR 8,245,680", icon: TrendingUp, color: "from-rose-500 to-pink-600", desc: "Net salary + allowances", change: "LKR 245K Overtime cost" },
-  ];
+    employees.forEach(emp => {
+      if (emp.leaveRequests) {
+        Object.values(emp.leaveRequests).forEach(req => {
+          if (req.status === "Approved" && req.fromDate <= today && req.toDate >= today) {
+            activeLeaves++;
+          }
+        });
+      }
+      payrollCost += (emp.basicSalary || 0);
+    });
+
+    const presentCount = attendanceData.find(a => a.name === "Present")?.value || 0;
+    const lateCount = attendanceData.find(a => a.name === "Late")?.value || 0;
+    const earlyCount = attendanceData.find(a => a.name === "Early Leave")?.value || 0;
+    const totalPresent = presentCount + lateCount + earlyCount;
+    const presentRate = employees.length > 0 ? ((totalPresent / employees.length) * 100).toFixed(1) : "0";
+
+    return [
+      { title: "Total Employees", value: employees.length.toString(), icon: Users, color: "from-blue-500 to-indigo-600", desc: "All departments", change: "Live sync" },
+      { title: "Today's Attendance", value: `${totalPresent} / ${employees.length}`, icon: Clock, color: "from-emerald-400 to-teal-600", desc: `${presentRate}% Present rate`, change: `${lateCount} late arrivals` },
+      { title: "Active Leaves", value: activeLeaves.toString(), icon: CalendarCheck, color: "from-amber-400 to-orange-500", desc: "Approved for today", change: `${dbLeavesAndOT.filter(r => r.type === "Leave").length} pending requests` },
+      { title: "Monthly Payroll Cost", value: `LKR ${payrollCost.toLocaleString()}`, icon: TrendingUp, color: "from-rose-500 to-pink-600", desc: "Net basic salary", change: "Excludes OT & Allowances" },
+    ];
+  }, [employees, attendanceData, dbLeavesAndOT]);
 
   return (
     <div className="space-y-6">
@@ -492,7 +584,7 @@ export default function Dashboard() {
               <div className="text-slate-400 text-xs">Loading Charts...</div>
             )}
             <div className="absolute flex flex-col items-center justify-center pointer-events-none">
-              <span className="text-2xl font-bold text-slate-800">198</span>
+              <span className="text-2xl font-bold text-slate-800">{attendanceData.find(a => a.name === "Present")?.value || 0}</span>
               <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Present</span>
             </div>
           </div>

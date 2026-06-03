@@ -44,7 +44,7 @@ import {
   Tooltip,
   Legend
 } from "recharts";
-import { mockAttendance, Employee, CorrectionRequest } from "@/lib/mockData";
+import { Employee, CorrectionRequest } from "@/lib/mockData";
 import { useAuth } from "@/lib/AuthContext";
 import Portal from "@/components/Portal";
 import { db } from "@/lib/firebase";

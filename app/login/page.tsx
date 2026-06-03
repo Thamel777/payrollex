@@ -5,6 +5,7 @@ import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 
 import { Fingerprint, Lock, Mail, AlertCircle, Eye, EyeOff } from "lucide-react";
+import Link from "next/link";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("admin@payrollex.com");
@@ -104,7 +105,7 @@ export default function LoginPage() {
             <div className="space-y-1.5">
               <div className="flex justify-between items-center">
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Password</label>
-                <a href="#" className="text-[10px] font-bold text-blue-400 hover:underline">Forgot password?</a>
+                <Link href="/forgot-password" className="text-[10px] font-bold text-blue-400 hover:underline">Forgot password?</Link>
               </div>
               <div className="relative">
                 <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-slate-400">
