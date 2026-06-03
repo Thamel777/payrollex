@@ -17,7 +17,7 @@ import {
   Edit2,
   Trash2
 } from "lucide-react";
-import { mockEmployees, mockShifts, Shift, Employee } from "@/lib/mockData";
+import { Shift, Employee, mockShifts } from "@/lib/mockData";
 import { db } from "@/lib/firebase";
 import { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, onSnapshot } from "firebase/firestore";
 import { useAuth } from "@/lib/AuthContext";
@@ -285,10 +285,8 @@ export default function ShiftRosterPage() {
     };
   }, []);
 
-  // Extract unique departments from Firestore employees (falling back to mock if db loading)
   const departments = useMemo(() => {
-    const sourceList = employees.length > 0 ? employees : mockEmployees;
-    return ["All", ...Array.from(new Set(sourceList.map(emp => emp.department)))];
+    return ["All", ...Array.from(new Set(employees.map(emp => emp.department)))];
   }, [employees]);
 
   // Week dates mapping
@@ -318,11 +316,8 @@ export default function ShiftRosterPage() {
     return "General Shift";
   };
 
-  // Filter roster rows
   const rosterData = useMemo(() => {
-    const sourceEmployees = employees.length > 0 ? employees : mockEmployees;
-    
-    const schedules = sourceEmployees.map(emp => {
+    const schedules = employees.map(emp => {
       const mon = getEmployeeShiftForDate(emp, "2024-05-20");
       const tue = getEmployeeShiftForDate(emp, "2024-05-21");
       const wed = getEmployeeShiftForDate(emp, "2024-05-22");
@@ -575,7 +570,7 @@ export default function ShiftRosterPage() {
           </div>
           <div>
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Shifts</span>
-            <p className="text-lg font-bold text-slate-800 leading-none mt-0.5">8 Types</p>
+            <p className="text-lg font-bold text-slate-800 leading-none mt-0.5">{shifts.length} Types</p>
           </div>
         </div>
         <div className="bg-white p-4 rounded-xl border border-card-border shadow-xs flex items-center gap-3">
@@ -584,7 +579,7 @@ export default function ShiftRosterPage() {
           </div>
           <div>
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Employees Mapped</span>
-            <p className="text-lg font-bold text-emerald-600 leading-none mt-0.5">256 (100%)</p>
+            <p className="text-lg font-bold text-emerald-600 leading-none mt-0.5">{employees.length} (100%)</p>
           </div>
         </div>
         <div className="bg-white p-4 rounded-xl border border-card-border shadow-xs flex items-center gap-3">
@@ -593,7 +588,7 @@ export default function ShiftRosterPage() {
           </div>
           <div>
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Active Shifts</span>
-            <p className="text-lg font-bold text-slate-800 leading-none mt-0.5">6 Shifts</p>
+            <p className="text-lg font-bold text-slate-800 leading-none mt-0.5">{shifts.filter(s => s.status === 'Active').length} Shifts</p>
           </div>
         </div>
         <div className="bg-white p-4 rounded-xl border border-card-border shadow-xs flex items-center gap-3">
@@ -602,7 +597,7 @@ export default function ShiftRosterPage() {
           </div>
           <div>
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Departments</span>
-            <p className="text-lg font-bold text-slate-800 leading-none mt-0.5">12 Allocated</p>
+            <p className="text-lg font-bold text-slate-800 leading-none mt-0.5">{Math.max(0, departments.length - 1)} Allocated</p>
           </div>
         </div>
         <div className="bg-white p-4 rounded-xl border border-card-border shadow-xs col-span-2 lg:col-span-1 flex items-center gap-3">
@@ -611,7 +606,7 @@ export default function ShiftRosterPage() {
           </div>
           <div>
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Roster Published</span>
-            <p className="text-lg font-bold text-slate-800 leading-none mt-0.5">May 20, 2024</p>
+            <p className="text-lg font-bold text-slate-800 leading-none mt-0.5">{new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
           </div>
         </div>
       </div>
@@ -688,7 +683,7 @@ export default function ShiftRosterPage() {
                   className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-600 bg-white cursor-pointer"
                 >
                   <option value="All">All Shifts</option>
-                  {(shifts.length > 0 ? shifts : mockShifts).map(s => (
+                  {shifts.map(s => (
                     <option key={s.id} value={s.name}>{s.name}</option>
                   ))}
                 </select>
@@ -841,7 +836,7 @@ export default function ShiftRosterPage() {
               )}
             </div>
             <div className="space-y-3 max-h-[19.5rem] overflow-y-auto pr-1">
-              {(shifts.length > 0 ? shifts : mockShifts).map((shift) => (
+              {shifts.map((shift) => (
                 <div key={shift.id} className="p-3 bg-slate-50 border border-slate-100 rounded-xl hover:border-slate-200 transition-all flex flex-col gap-1.5 group relative">
                   <div className="flex items-center justify-between">
                     <span className="font-bold text-slate-700 text-xs">{shift.name}</span>
@@ -1226,18 +1221,21 @@ export default function ShiftRosterPage() {
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Select Shift to Assign</label>
-                  <select
-                    required
-                    value={allocateForm.shiftName}
-                    onChange={(e) => setAllocateForm(prev => ({ ...prev, shiftName: e.target.value }))}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold bg-white"
-                  >
-                    <option value="">-- Choose Shift --</option>
-                    {(shifts.length > 0 ? shifts : mockShifts).map(s => (
-                      <option key={s.id} value={s.name}>{s.name}</option>
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
+                    {shifts.map(s => (
+                      <label key={s.id} className={`flex items-center gap-3 p-3 border rounded-xl cursor-pointer transition-all ${allocateForm.shiftName === s.name ? "border-blue-500 bg-blue-50/50" : "border-slate-200 hover:bg-slate-50"}`}>
+                        <input
+                          type="radio"
+                          name="shiftSelection"
+                          value={s.name}
+                          checked={allocateForm.shiftName === s.name}
+                          onChange={(e) => setAllocateForm(prev => ({ ...prev, shiftName: e.target.value }))}
+                          className="accent-blue-600"
+                        />
+                        <span className="font-bold text-slate-700">{s.name}</span>
+                      </label>
                     ))}
-                    <option value="Weekend Off">Weekend Off</option>
-                  </select>
+                  </div>
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date Configuration</label>

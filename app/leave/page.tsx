@@ -242,8 +242,9 @@ export default function LeavePage() {
       }
     });
 
+    // Remove fallback to mockLeaveRequests to purely use Firestore data
     if (list.length === 0 && dbLoading) {
-      return mockLeaveRequests.map(r => ({ ...r, empId: "EMP001" }));
+      return [];
     }
 
     // Sort desc by appliedOn

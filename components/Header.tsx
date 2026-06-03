@@ -5,12 +5,16 @@ import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/AuthContext";
 import Link from "next/link";
+import { useNotifications } from "@/hooks/useNotifications";
 
 export default function Header() {
   const pathname = usePathname();
   const { user, role, logout } = useAuth();
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const { notifications, unreadCount, markAllAsRead } = useNotifications();
 
   // Derive breadcrumbs/page title from route
   const getPageTitle = () => {
@@ -44,12 +48,7 @@ export default function Header() {
     }
   };
 
-  const dummyNotifications = [
-    { id: 1, text: "New manual attendance correction request from Nimal Perera", time: "5m ago", unread: true },
-    { id: 2, text: "BioStar 2 Auto-Sync completed successfully: 1,245 logs imported", time: "15m ago", unread: true },
-    { id: 3, text: "Leave request pending approval for Kavindi Silva", time: "1h ago", unread: false },
-    { id: 4, text: "System maintenance scheduled for Sunday at 02:00 AM", time: "1d ago", unread: false },
-  ];
+
 
   return (
     <header className="h-16 border-b border-card-border bg-white flex items-center justify-between px-6 sticky top-0 z-40 select-none">
@@ -73,18 +72,24 @@ export default function Header() {
           </span>
           <input
             type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && searchQuery.trim()) {
+                window.location.href = `/employees?search=${encodeURIComponent(searchQuery.trim())}`;
+              }
+            }}
             placeholder="Search employee or record..."
             className="w-64 pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white text-slate-700 transition-all placeholder-slate-400"
           />
         </div>
 
-        {/* Date Display */}
         <div className="hidden lg:flex flex-col text-right">
           <span className="text-xs font-bold text-slate-800">
-            Thursday, May 21, 2026
+            {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
           </span>
           <span className="text-[10px] text-slate-500 font-semibold">
-            Attendance Date: May 20, 2024
+            Attendance Date: {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
           </span>
         </div>
 
@@ -95,38 +100,46 @@ export default function Header() {
             className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-800 relative transition-colors focus:outline-none"
           >
             <Bell className="h-5 w-5" />
-            <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500"></span>
+            {unreadCount > 0 && (
+              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500"></span>
+            )}
           </button>
 
           {showNotifications && (
             <div className="absolute right-0 mt-3 w-80 bg-white border border-slate-200 rounded-xl shadow-xl py-2 z-50 animate-fade-in overflow-hidden">
               <div className="px-4 py-2 border-b border-slate-100 flex items-center justify-between">
                 <span className="text-xs font-bold text-slate-800">Notifications</span>
-                <span className="text-[10px] text-blue-600 font-semibold cursor-pointer hover:underline">
-                  Mark all read
-                </span>
+                {unreadCount > 0 && (
+                  <button onClick={markAllAsRead} className="text-[10px] text-blue-600 font-semibold cursor-pointer hover:underline">
+                    Mark all read
+                  </button>
+                )}
               </div>
               <div className="max-h-64 overflow-y-auto">
-                {dummyNotifications.map((notif) => (
-                  <div
-                    key={notif.id}
-                    className={`px-4 py-2.5 hover:bg-slate-50 border-b border-slate-50 flex flex-col gap-0.5 cursor-pointer ${
-                      notif.unread ? "bg-blue-50/20" : ""
-                    }`}
-                  >
-                    <p className="text-xs text-slate-700 font-medium leading-normal">
-                      {notif.text}
-                    </p>
-                    <span className="text-[9px] text-slate-400 font-semibold">
-                      {notif.time}
-                    </span>
-                  </div>
-                ))}
+                {notifications.length === 0 ? (
+                  <div className="p-4 text-center text-xs text-slate-500">No notifications</div>
+                ) : (
+                  notifications.map((notif) => (
+                    <div
+                      key={notif.id}
+                      className={`px-4 py-2.5 hover:bg-slate-50 border-b border-slate-50 flex flex-col gap-0.5 cursor-pointer ${
+                        notif.unread ? "bg-blue-50/20" : ""
+                      }`}
+                    >
+                      <p className="text-xs text-slate-700 font-medium leading-normal">
+                        {notif.text}
+                      </p>
+                      <span className="text-[9px] text-slate-400 font-semibold">
+                        {notif.time}
+                      </span>
+                    </div>
+                  ))
+                )}
               </div>
               <div className="px-4 py-1.5 text-center border-t border-slate-100">
-                <span className="text-[10px] text-slate-500 font-semibold hover:text-slate-800 cursor-pointer">
+                <Link href="/notifications" className="text-[10px] text-slate-500 font-semibold hover:text-slate-800 cursor-pointer">
                   View all alerts
-                </span>
+                </Link>
               </div>
             </div>
           )}
@@ -166,10 +179,10 @@ export default function Header() {
                 <User className="h-4 w-4 text-slate-400" />
                 My Profile
               </Link>
-              <button className="w-full px-4 py-2 hover:bg-slate-50 text-left text-xs font-medium text-slate-700 flex items-center gap-2 transition-colors">
+              <Link href="/settings" onClick={() => setShowProfileMenu(false)} className="w-full px-4 py-2 hover:bg-slate-50 text-left text-xs font-medium text-slate-700 flex items-center gap-2 transition-colors">
                 <Settings className="h-4 w-4 text-slate-400" />
                 System Settings
-              </button>
+              </Link>
               <div className="border-t border-slate-100 my-1"></div>
               <button
                 onClick={logout}

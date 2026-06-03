@@ -14,7 +14,7 @@ import {
   FileText
 } from "lucide-react";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend } from "recharts";
-import { mockEmployees, Employee } from "@/lib/mockData";
+import { Employee } from "@/lib/mockData";
 import Link from "next/link";
 import { db } from "@/lib/firebase";
 import { doc, getDoc, setDoc, onSnapshot, collection } from "firebase/firestore";
@@ -95,7 +95,7 @@ export default function PayrollPage() {
   };
 
   const liveComputedEmployees = useMemo(() => {
-    const employeesList = dbEmployees.length > 0 ? dbEmployees : mockEmployees;
+    const employeesList = dbEmployees;
     return employeesList.map(emp => {
       const basic = emp.basicSalary || 0;
 
